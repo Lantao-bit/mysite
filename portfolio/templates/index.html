@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block title %}Portfolio - Home{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+    <div class="row">
+        <!-- Left column: Professional + Portfolio -->
+        <div class="col-lg-8">
+            <!-- Professional Section -->
+            <section id="professional" class="mb-5">
+                <div class="row align-items-center">
+                    <div class="col-md-4 text-center mb-4 mb-md-0">
+                        <img src="{{ url_for('static', filename='images/ltphoto.png') }}" alt="Profile photo"
+                             class="rounded-circle img-fluid" style="max-width: 250px;"
+                             onerror="this.style.display='none'">
+                    </div>
+                    <div class="col-md-8">
+                        <h1>Lantao Yang</h1>
+                        <h4 class="text-muted">Product Expert</h4>
+                        <p class="lead mt-3">
+                            Senior Product Manager | ERP, HCM & Payroll Domain Expert | Enterprise SaaS & Implementation Leader | Evolving Toward AI-Powered Product Development & Intelligent Software Engineering.
+                        </p>
+
+                        <h5>Skills</h5>
+                        <ul class="list-inline">
+                            <li class="list-inline-item"><span class="badge bg-primary">Product Design</span></li>
+                            <li class="list-inline-item"><span class="badge bg-primary">SaaS</span></li>
+                            <li class="list-inline-item"><span class="badge bg-primary">SAP Payroll</span></li>
+                            <li class="list-inline-item"><span class="badge bg-primary">SAP SuccessFactors</span></li>
+                            <li class="list-inline-item"><span class="badge bg-primary">AI Powered Software Engineering</span></li>
+                            <li class="list-inline-item"><span class="badge bg-primary">DevOps</span></li>
+                        </ul>
+
+                        <h5>Contact</h5>
+                        <p>
+                            <a href="mailto:lantao.yang@outlook.com"><i class="bi bi-envelope"></i>lantao.yang@outlook.com</a><br>
+                            <a href="https://github.com/Lantao-bit" target="_blank"><i class="bi bi-github"></i> GitHub</a>
+                            <span class="mx-2">|</span>
+                            <a href="https://linkedin.com/in/lantao-yang-69033713" target="_blank"><i class="bi bi-linkedin"></i> LinkedIn</a>
+                        </p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Portfolio Section -->
+            <section id="portfolio" class="mb-5 p-4 bg-light rounded">
+                <h2 class="mb-4">Portfolio</h2>
+                <div class="row">
+                    {% for project in projects %}
+                    <div class="col-md-6 mb-4">
+                        <div class="card h-100">
+                            {% if project.image_url %}
+                            <img src="{{ project.image_url }}" class="card-img-top" alt="{{ project.title }}">
+                            {% endif %}
+                            <div class="card-body">
+                                <h5 class="card-title">{{ project.title }}</h5>
+                                <p class="card-text">{{ project.description }}</p>
+                            </div>
+                            {% if project.external_link %}
+                            <div class="card-footer">
+                                <a href="{{ project.external_link }}" target="_blank" class="btn btn-outline-primary btn-sm">
+                                    View Project <i class="bi bi-box-arrow-up-right"></i>
+                                </a>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="col">
+                        <p class="text-muted">Under development</p>
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
+        </div>
+
+        <!-- Right column: Comments -->
+        <div class="col-lg-4">
+            <section id="comments" class="sticky-top" style="top: 1rem;">
+                <h2 class="mb-4">Comments</h2>
+                <p> Thanks for stopping by my portfolio! Feel free to leave a comment — I'd love to hear from you.</p>
+                {% if current_user.is_authenticated %}
+                <form method="POST" action="{{ url_for('add_comment') }}" class="mb-4">
+                    {{ form.hidden_tag() }}
+                    <div class="mb-3">
+                        <label for="body" class="form-label">Leave a comment</label>
+                        {{ form.body(class="form-control", rows="3", placeholder="Write your comment...") }}
+                        {% for error in form.body.errors %}
+                        <div class="invalid-feedback d-block">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                    <button type="submit" class="btn btn-primary">Submit</button>
+                </form>
+                {% else %}
+                <p class="text-muted mb-4">
+                    <a href="{{ url_for('login') }}">Log in</a> to leave a comment.
+                </p>
+                {% endif %}
+
+                <div style="max-height: 70vh; overflow-y: auto;">
+                    {% for comment in comments %}
+                    <small class="text-muted">
+                        By {{ comment.username }} on {{ comment.created_at }}
+                    </small>
+                    <div class="card mb-2">
+                        <div class="card-body" mb-0>
+                            <p class="card-text">{{ comment.body }}</p>                            
+                        </div>
+                    </div>
+                    {% else %}
+                    <p class="text-muted">No comments yet. Be the first!</p>
+                    {% endfor %}
+                </div>
+            </section>
+        </div>
+    </div>
+</div>
+{% endblock %}
