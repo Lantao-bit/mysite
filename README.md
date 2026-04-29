@@ -87,6 +87,19 @@ tests/
 5. Map `/static` to `~/mysite/portfolio/static`
 6. Reload the web app
 
+## Docker
+
+```bash
+# Build and run with docker compose
+docker compose up -d
+
+# Or build and run manually
+docker build -t portfolio .
+docker run -p 5000:5000 -v ./data:/app/data -e SECRET_KEY=your-secret portfolio
+```
+
+The SQLite database is stored in `./data/` on the host via a volume mount, so data persists across container restarts.
+
 ## License
 
 MIT
