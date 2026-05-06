@@ -100,6 +100,23 @@ docker run -p 5000:5000 -v ./data:/app/data -e SECRET_KEY=your-secret portfolio
 
 The SQLite database is stored in `./data/` on the host via a volume mount, so data persists across container restarts.
 
+## Kubernetes (Docker Desktop)
+
+See the step-by-step guide below or use the convenience script:
+
+```bash
+cd k8s
+./deploy.sh
+```
+
+App will be available at http://localhost:30080.
+
+To tear down:
+
+```bash
+kubectl delete namespace portfolio
+```
+
 ## License
 
 MIT
