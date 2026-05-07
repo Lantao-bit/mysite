@@ -37,7 +37,6 @@ stages:
               Dockerfile: '$(Build.SourcesDirectory)/Dockerfile'
               buildContext: '$(Build.SourcesDirectory)'
               repository: '$(imageName)'
-              arguments: '--platform linux/amd64'
               tags: |
                 $(imageTag)
                 latest
