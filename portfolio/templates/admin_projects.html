@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block title %}Manage Portfolio{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Manage Portfolio</h1>
+    <div class="mb-3">
+        <a href="{{ url_for('admin_create_project') }}" class="btn btn-primary">Add Project</a>
+        <a href="{{ url_for('admin_export_projects') }}" class="btn btn-secondary">Export JSON</a>
+        <a href="{{ url_for('admin_import_projects') }}" class="btn btn-secondary">Import JSON</a>
+    </div>
+    <table class="table table-striped">
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Description</th>
+                <th>Display Order</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for project in projects %}
+            <tr>
+                <td>{{ project.title }}</td>
+                <td>{{ project.description[:80] }}{% if project.description|length > 80 %}...{% endif %}</td>
+                <td>{{ project.display_order }}</td>
+                <td>
+                    <a href="{{ url_for('admin_edit_project', id=project.id) }}" class="btn btn-sm btn-outline-primary">Edit</a>
+                    <form action="{{ url_for('admin_delete_project', id=project.id) }}" method="POST" class="d-inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete this project?')">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

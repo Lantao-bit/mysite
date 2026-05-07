@@ -5,12 +5,14 @@ import os
 from flask import Flask, render_template
 from flask_login import LoginManager
 from flask_migrate import Migrate
+from flask_wtf.csrf import CSRFProtect
 
 from portfolio.db import get_user_by_id, init_db
 from portfolio.models import db as sa_db
 
 
 migrate = Migrate()
+csrf = CSRFProtect()
 
 
 def create_app(config=None):
@@ -28,12 +30,16 @@ def create_app(config=None):
     # Keep legacy key for any code that still references it
     app.config["DATABASE_PATH"] = db_path
 
+    # Admin user identification
+    app.config["ADMIN_EMAIL"] = os.environ.get("ADMIN_EMAIL", "")
+
     if config:
         app.config.update(config)
 
     # Initialize SQLAlchemy + Migrate
     init_db(app)
     migrate.init_app(app, sa_db)
+    csrf.init_app(app)
 
     # Flask-Login
     login_manager = LoginManager()

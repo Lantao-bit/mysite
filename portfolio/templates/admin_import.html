@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}Import Projects{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>Import Projects</h1>
+    <p>Upload a JSON file containing an array of project objects. Each object must have at least <code>title</code> and <code>description</code> fields.</p>
+    <p>Optional fields: <code>image_url</code>, <code>external_link</code>, <code>display_order</code> (defaults to 0).</p>
+    <form method="POST" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="mb-3">
+            <label for="file" class="form-label">JSON File</label>
+            <input type="file" class="form-control" id="file" name="file" accept=".json">
+        </div>
+        <button type="submit" class="btn btn-primary">Import</button>
+        <a href="{{ url_for('admin_projects') }}" class="btn btn-secondary">Cancel</a>
+    </form>
+</div>
+{% endblock %}

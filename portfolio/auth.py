@@ -1,11 +1,27 @@
 """Authentication logic: User class, registration, and login."""
 
 import sqlite3
+from functools import wraps
 
-from flask_login import UserMixin
+from flask import abort, current_app
+from flask_login import UserMixin, current_user, login_required
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from portfolio.db import create_user, get_user_by_username
+
+
+def admin_required(f):
+    """Decorator that requires the user to be authenticated AND be the admin."""
+
+    @wraps(f)
+    @login_required
+    def decorated_function(*args, **kwargs):
+        admin_email = current_app.config.get("ADMIN_EMAIL")
+        if not admin_email or current_user.email != admin_email:
+            abort(403)
+        return f(*args, **kwargs)
+
+    return decorated_function
 
 
 class User(UserMixin):

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}{{ "Edit Project" if editing else "Create Project" }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1>{{ "Edit Project" if editing else "Create Project" }}</h1>
+    <form method="POST" novalidate>
+        {{ form.hidden_tag() }}
+        <div class="mb-3">
+            {{ form.title.label(class="form-label") }}
+            {{ form.title(class="form-control" + (" is-invalid" if form.title.errors else "")) }}
+            {% for error in form.title.errors %}
+            <div class="invalid-feedback">{{ error }}</div>
+            {% endfor %}
+        </div>
+        <div class="mb-3">
+            {{ form.description.label(class="form-label") }}
+            {{ form.description(class="form-control" + (" is-invalid" if form.description.errors else ""), rows=5) }}
+            {% for error in form.description.errors %}
+            <div class="invalid-feedback">{{ error }}</div>
+            {% endfor %}
+        </div>
+        <div class="mb-3">
+            {{ form.image_url.label(class="form-label") }}
+            {{ form.image_url(class="form-control" + (" is-invalid" if form.image_url.errors else "")) }}
+            {% for error in form.image_url.errors %}
+            <div class="invalid-feedback">{{ error }}</div>
+            {% endfor %}
+        </div>
+        <div class="mb-3">
+            {{ form.external_link.label(class="form-label") }}
+            {{ form.external_link(class="form-control" + (" is-invalid" if form.external_link.errors else "")) }}
+            {% for error in form.external_link.errors %}
+            <div class="invalid-feedback">{{ error }}</div>
+            {% endfor %}
+        </div>
+        <div class="mb-3">
+            {{ form.display_order.label(class="form-label") }}
+            {{ form.display_order(class="form-control" + (" is-invalid" if form.display_order.errors else "")) }}
+            {% for error in form.display_order.errors %}
+            <div class="invalid-feedback">{{ error }}</div>
+            {% endfor %}
+        </div>
+        <button type="submit" class="btn btn-primary">{{ "Update" if editing else "Create" }}</button>
+        <a href="{{ url_for('admin_projects') }}" class="btn btn-secondary">Cancel</a>
+    </form>
+</div>
+{% endblock %}

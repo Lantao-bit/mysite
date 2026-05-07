@@ -27,6 +27,11 @@
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('index') }}#comments">Comments</a>
                     </li>
+                    {% if current_user.is_authenticated and current_user.email == config['ADMIN_EMAIL'] %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('admin_projects') }}">Manage Portfolio</a>
+                    </li>
+                    {% endif %}
                 </ul>
                 <ul class="navbar-nav">
                     {% if current_user.is_authenticated %}

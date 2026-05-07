@@ -104,3 +104,83 @@ def get_user_by_id(user_id: int) -> dict | None:
         "password_hash": user.password_hash,
         "created_at": user.created_at,
     }
+
+
+def get_project_by_id(project_id: int) -> dict | None:
+    """Fetch a single project by ID, or None if not found."""
+    project = db.session.get(Project, project_id)
+    if project is None:
+        return None
+    return {
+        "id": project.id,
+        "title": project.title,
+        "description": project.description,
+        "image_url": project.image_url,
+        "external_link": project.external_link,
+        "display_order": project.display_order,
+    }
+
+
+def create_project(
+    title: str,
+    description: str,
+    image_url: str | None = None,
+    external_link: str | None = None,
+    display_order: int = 0,
+) -> dict:
+    """Insert a new project and return the created record as a dict."""
+    project = Project(
+        title=title,
+        description=description,
+        image_url=image_url,
+        external_link=external_link,
+        display_order=display_order,
+    )
+    db.session.add(project)
+    db.session.commit()
+    return {
+        "id": project.id,
+        "title": project.title,
+        "description": project.description,
+        "image_url": project.image_url,
+        "external_link": project.external_link,
+        "display_order": project.display_order,
+    }
+
+
+def update_project(
+    project_id: int,
+    title: str,
+    description: str,
+    image_url: str | None = None,
+    external_link: str | None = None,
+    display_order: int = 0,
+) -> dict | None:
+    """Update an existing project. Returns updated dict or None if not found."""
+    project = db.session.get(Project, project_id)
+    if project is None:
+        return None
+    project.title = title
+    project.description = description
+    project.image_url = image_url
+    project.external_link = external_link
+    project.display_order = display_order
+    db.session.commit()
+    return {
+        "id": project.id,
+        "title": project.title,
+        "description": project.description,
+        "image_url": project.image_url,
+        "external_link": project.external_link,
+        "display_order": project.display_order,
+    }
+
+
+def delete_project(project_id: int) -> bool:
+    """Delete a project by ID. Returns True if deleted, False if not found."""
+    project = db.session.get(Project, project_id)
+    if project is None:
+        return False
+    db.session.delete(project)
+    db.session.commit()
+    return True
