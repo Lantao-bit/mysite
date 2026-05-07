@@ -58,7 +58,7 @@ stages:
       - job: DeployToAKS
         displayName: 'Apply manifests to AKS'
         pool:
-          vmImage: 'ubuntu-latest'
+          name: 'Default' #vmImage: 'ubuntu-latest'
         steps:
           - task: Bash@3
             displayName: 'Replace image tag in manifest'
