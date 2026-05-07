@@ -32,17 +32,19 @@ stages:
 
           - task: Bash@3
             displayName: 'Build and push image (linux/amd64)'
+            env:
+              DOCKER_HOST: unix:///var/run/docker.sock
             inputs:
               targetType: inline
               script: |
-                docker buildx use desktop-linux
-                docker buildx build \
-                  --platform linux/amd64 \
-                  --push \
-                  -t $(imageName):$(imageTag) \
-                  -t $(imageName):latest \
-                  -f $(Build.SourcesDirectory)/Dockerfile \
-                  $(Build.SourcesDirectory)
+                set -ex
+                echo "=== Docker info ==="
+                docker version --format '{{.Server.Os}}/{{.Server.Arch}}'
+                echo "=== Building ==="
+                DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -t $(imageName):$(imageTag) -t $(imageName):latest -f $(Build.SourcesDirectory)/Dockerfile $(Build.SourcesDirectory)
+                echo "=== Pushing ==="
+                docker push $(imageName):$(imageTag)
+                docker push $(imageName):latest
 
   # ── Stage 2: Deploy to AKS ──────────────────────────────────────────
   - stage: Deploy
