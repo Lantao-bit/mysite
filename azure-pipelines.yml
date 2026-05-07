@@ -65,7 +65,7 @@ stages:
             inputs:
               targetType: inline
               script: |
-                sed -i "s/__IMAGE_TAG__/$(imageTag)/g" k8s/deployment.yaml
+                sed -i'' -e "s/__IMAGE_TAG__/$(imageTag)/g" k8s/deployment.yaml
                 cat k8s/deployment.yaml
 
           - task: Kubernetes@1
