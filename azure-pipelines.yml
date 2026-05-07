@@ -22,7 +22,7 @@ stages:
       - job: BuildAndPush
         displayName: 'Build Docker image and push to Docker Hub'
         pool:
-          vmImage: 'ubuntu-latest'
+          name: 'Default'   # vmImage: 'ubuntu-latest'
         steps:
           - task: Docker@2
             displayName: 'Login to Docker Hub'
@@ -58,7 +58,7 @@ stages:
       - job: DeployToAKS
         displayName: 'Apply manifests to AKS'
         pool:
-          name: 'Default' #vmImage: 'ubuntu-latest'
+          name: 'Default'   # vmImage: 'ubuntu-latest'
         steps:
           - task: Bash@3
             displayName: 'Replace image tag in manifest'
