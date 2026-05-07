@@ -36,17 +36,14 @@ stages:
               targetType: inline
               script: |
                 set -ex
-                export DOCKER_BUILDKIT=0
                 export PATH="/usr/local/bin:$PATH"
-                echo "=== Docker path ==="
-                which docker
-                echo "=== Building ==="
-                docker build --platform linux/amd64 -t $(imageName):$(imageTag) -t $(imageName):latest -f $(Build.SourcesDirectory)/Dockerfile $(Build.SourcesDirectory)
-                echo "=== Verifying architecture ==="
-                docker inspect $(imageName):$(imageTag) --format '{{.Architecture}}'
-                echo "=== Pushing ==="
-                docker push $(imageName):$(imageTag)
-                docker push $(imageName):latest
+                docker buildx build \
+                  --platform linux/amd64 \
+                  --push \
+                  -t $(imageName):$(imageTag) \
+                  -t $(imageName):latest \
+                  -f $(Build.SourcesDirectory)/Dockerfile \
+                  $(Build.SourcesDirectory)
 
   # ── Stage 2: Deploy to AKS ──────────────────────────────────────────
   - stage: Deploy
