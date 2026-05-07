@@ -31,7 +31,7 @@ def create_app(config=None):
     app.config["DATABASE_PATH"] = db_path
 
     # Admin user identification
-    app.config["ADMIN_EMAIL"] = os.environ.get("ADMIN_EMAIL", "")
+    app.config["ADMIN_EMAIL"] = os.environ.get("ADMIN_EMAIL", "lantao.yang@outlook.com")
 
     if config:
         app.config.update(config)
