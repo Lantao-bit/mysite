@@ -35,7 +35,6 @@ stages:
             inputs:
               targetType: inline
               script: |
-                docker buildx create --name amd64builder --use 2>/dev/null || docker buildx use amd64builder
                 docker buildx build \
                   --platform linux/amd64 \
                   --push \
