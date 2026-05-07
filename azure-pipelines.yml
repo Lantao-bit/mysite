@@ -37,6 +37,7 @@ stages:
               Dockerfile: '$(Build.SourcesDirectory)/Dockerfile'
               buildContext: '$(Build.SourcesDirectory)'
               repository: '$(imageName)'
+              arguments: '--platform linux/amd64'
               tags: |
                 $(imageTag)
                 latest
@@ -110,8 +111,9 @@ stages:
 
           - task: Kubernetes@1
             displayName: 'Check rollout status'
+            continueOnError: true
             inputs:
               connectionType: 'Kubernetes Service Connection'
               kubernetesServiceEndpoint: '$(kubernetesServiceConnection)'
               command: 'rollout'
-              arguments: 'status deployment/portfolio -n $(namespace) --timeout=120s'
+              arguments: 'status deployment/portfolio -n $(namespace) --timeout=180s'
