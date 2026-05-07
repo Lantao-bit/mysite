@@ -1,0 +1,117 @@
+# Azure DevOps CI/CD Pipeline
+# Triggers on push to main branch
+# Builds Docker image, pushes to Docker Hub, deploys to AKS
+
+trigger:
+  branches:
+    include:
+      - main
+
+variables:
+  dockerHubUser: 'ltyang'
+  imageName: 'ltyang/portfolio'
+  imageTag: '$(Build.BuildId)'
+  kubernetesServiceConnection: 'aks-portfolio-connection'
+  namespace: 'portfolio'
+
+stages:
+  # ── Stage 1: Build and Push ──────────────────────────────────────────
+  - stage: Build
+    displayName: 'Build & Push Image'
+    jobs:
+      - job: BuildAndPush
+        displayName: 'Build Docker image and push to Docker Hub'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Docker@2
+            displayName: 'Login to Docker Hub'
+            inputs:
+              command: login
+              containerRegistry: 'dockerhub-connection'
+
+          - task: Docker@2
+            displayName: 'Build image'
+            inputs:
+              command: build
+              Dockerfile: '$(Build.SourcesDirectory)/Dockerfile'
+              buildContext: '$(Build.SourcesDirectory)'
+              repository: '$(imageName)'
+              tags: |
+                $(imageTag)
+                latest
+
+          - task: Docker@2
+            displayName: 'Push image'
+            inputs:
+              command: push
+              repository: '$(imageName)'
+              tags: |
+                $(imageTag)
+                latest
+
+  # ── Stage 2: Deploy to AKS ──────────────────────────────────────────
+  - stage: Deploy
+    displayName: 'Deploy to AKS'
+    dependsOn: Build
+    jobs:
+      - job: DeployToAKS
+        displayName: 'Apply manifests to AKS'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Bash@3
+            displayName: 'Replace image tag in manifest'
+            inputs:
+              targetType: inline
+              script: |
+                sed -i "s/__IMAGE_TAG__/$(imageTag)/g" k8s/deployment.yaml
+                cat k8s/deployment.yaml
+
+          - task: Kubernetes@1
+            displayName: 'Apply namespace'
+            inputs:
+              connectionType: 'Kubernetes Service Connection'
+              kubernetesServiceEndpoint: '$(kubernetesServiceConnection)'
+              command: apply
+              arguments: '-f k8s/namespace.yaml'
+
+          - task: Kubernetes@1
+            displayName: 'Apply secret'
+            inputs:
+              connectionType: 'Kubernetes Service Connection'
+              kubernetesServiceEndpoint: '$(kubernetesServiceConnection)'
+              command: apply
+              arguments: '-f k8s/secret.yaml'
+
+          - task: Kubernetes@1
+            displayName: 'Apply PVC'
+            inputs:
+              connectionType: 'Kubernetes Service Connection'
+              kubernetesServiceEndpoint: '$(kubernetesServiceConnection)'
+              command: apply
+              arguments: '-f k8s/pvc.yaml'
+
+          - task: Kubernetes@1
+            displayName: 'Apply deployment'
+            inputs:
+              connectionType: 'Kubernetes Service Connection'
+              kubernetesServiceEndpoint: '$(kubernetesServiceConnection)'
+              command: apply
+              arguments: '-f k8s/deployment.yaml'
+
+          - task: Kubernetes@1
+            displayName: 'Apply service'
+            inputs:
+              connectionType: 'Kubernetes Service Connection'
+              kubernetesServiceEndpoint: '$(kubernetesServiceConnection)'
+              command: apply
+              arguments: '-f k8s/service.yaml'
+
+          - task: Kubernetes@1
+            displayName: 'Check rollout status'
+            inputs:
+              connectionType: 'Kubernetes Service Connection'
+              kubernetesServiceEndpoint: '$(kubernetesServiceConnection)'
+              command: 'rollout'
+              arguments: 'status deployment/portfolio -n $(namespace) --timeout=120s'

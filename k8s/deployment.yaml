@@ -6,7 +6,7 @@ metadata:
   labels:
     app: portfolio
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: portfolio
@@ -17,8 +17,8 @@ spec:
     spec:
       containers:
         - name: portfolio
-          image: portfolio:latest
-          imagePullPolicy: Never
+          image: ltyang/portfolio:__IMAGE_TAG__
+          imagePullPolicy: Always
           ports:
             - containerPort: 5000
           env:

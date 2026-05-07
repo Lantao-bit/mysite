@@ -4,10 +4,9 @@ metadata:
   name: portfolio-service
   namespace: portfolio
 spec:
-  type: NodePort
+  type: LoadBalancer
   selector:
     app: portfolio
   ports:
     - port: 80
       targetPort: 5000
-      nodePort: 30080
