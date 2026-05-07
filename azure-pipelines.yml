@@ -37,11 +37,12 @@ stages:
               script: |
                 set -ex
                 export HOME=/Users/yanglantao
-                echo "HOME=$HOME"
-                echo "Plugins:"
-                ls $HOME/.docker/cli-plugins/ || echo "No plugins dir"
-                docker buildx version
-                docker buildx build \
+                # Call docker-buildx plugin directly
+                BUILDX=$HOME/.docker/cli-plugins/docker-buildx
+                echo "Buildx version:"
+                $BUILDX version
+                # Build and push
+                $BUILDX build \
                   --platform linux/amd64 \
                   --push \
                   -t $(imageName):$(imageTag) \
