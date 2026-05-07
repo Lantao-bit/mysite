@@ -32,16 +32,18 @@ stages:
 
           - task: Bash@3
             displayName: 'Build and push image (linux/amd64)'
-            env:
-              DOCKER_HOST: unix:///var/run/docker.sock
             inputs:
               targetType: inline
               script: |
                 set -ex
-                echo "=== Docker info ==="
-                docker version --format '{{.Server.Os}}/{{.Server.Arch}}'
+                export DOCKER_BUILDKIT=0
+                export PATH="/usr/local/bin:$PATH"
+                echo "=== Docker path ==="
+                which docker
                 echo "=== Building ==="
-                DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -t $(imageName):$(imageTag) -t $(imageName):latest -f $(Build.SourcesDirectory)/Dockerfile $(Build.SourcesDirectory)
+                docker build --platform linux/amd64 -t $(imageName):$(imageTag) -t $(imageName):latest -f $(Build.SourcesDirectory)/Dockerfile $(Build.SourcesDirectory)
+                echo "=== Verifying architecture ==="
+                docker inspect $(imageName):$(imageTag) --format '{{.Architecture}}'
                 echo "=== Pushing ==="
                 docker push $(imageName):$(imageTag)
                 docker push $(imageName):latest
