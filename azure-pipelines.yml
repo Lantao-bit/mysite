@@ -35,6 +35,8 @@ stages:
             inputs:
               targetType: inline
               script: |
+                docker buildx create --name pipelinebuilder --driver docker-container --bootstrap 2>/dev/null || true
+                docker buildx use pipelinebuilder
                 docker buildx build \
                   --platform linux/amd64 \
                   --push \
