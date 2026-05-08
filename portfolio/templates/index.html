@@ -51,7 +51,11 @@
                     <div class="col-md-6 mb-4">
                         <div class="card h-100">
                             {% if project.image_url %}
+                            {% if project.image_url.startswith('/static/') %}
+                            <img src="{{ url_for('static', filename=project.image_url[8:]) }}" class="card-img-top" alt="{{ project.title }}">
+                            {% else %}
                             <img src="{{ project.image_url }}" class="card-img-top" alt="{{ project.title }}">
+                            {% endif %}
                             {% endif %}
                             <div class="card-body">
                                 <h5 class="card-title">{{ project.title }}</h5>
