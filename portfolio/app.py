@@ -6,6 +6,7 @@ from flask import Flask, render_template
 from flask_login import LoginManager
 from flask_migrate import Migrate
 from flask_wtf.csrf import CSRFProtect
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from portfolio.db import get_user_by_id, init_db
 from portfolio.models import db as sa_db
@@ -54,6 +55,9 @@ def create_app(config=None):
         if row is None:
             return None
         return AuthUser.from_db(row)
+
+    # Trust X-Forwarded-* headers from reverse proxy (ingress controller)
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
     # Register route handlers
     from portfolio.routes import register_routes

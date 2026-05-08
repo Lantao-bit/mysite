@@ -1,0 +1,28 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: portfolio-ingress
+  namespace: portfolio
+  annotations:
+    # Switch to letsencrypt-prod once you have a real domain
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  # Uncomment the tls block once you have a domain and cert-manager issuer ready
+  # tls:
+  #   - hosts:
+  #       - yourdomain.com
+  #     secretName: portfolio-tls
+  rules:
+    # Replace "yourdomain.com" with your actual domain when ready
+    # For now, this catches all traffic to the ingress IP
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: portfolio-service
+                port:
+                  number: 80
