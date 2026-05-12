@@ -15,9 +15,36 @@ variables:
   namespace: 'portfolio'
 
 stages:
+  # ── Stage 0: Test ───────────────────────────────────────────────────
+  - stage: Test
+    displayName: 'Run Tests'
+    jobs:
+      - job: RunTests
+        displayName: 'Install dependencies and run pytest'
+        pool:
+          name: 'Default'
+        steps:
+          - task: Bash@3
+            displayName: 'Install dependencies'
+            inputs:
+              targetType: inline
+              script: |
+                set -ex
+                python3 -m pip install --upgrade pip
+                python3 -m pip install -r portfolio/requirements.txt
+
+          - task: Bash@3
+            displayName: 'Run test suite'
+            inputs:
+              targetType: inline
+              script: |
+                set -ex
+                python3 -m pytest tests/ -v --tb=short
+
   # ── Stage 1: Build and Push ──────────────────────────────────────────
   - stage: Build
     displayName: 'Build & Push Image'
+    dependsOn: Test
     jobs:
       - job: BuildAndPush
         displayName: 'Build Docker image and push to Docker Hub'
