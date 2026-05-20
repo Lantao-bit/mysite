@@ -41,10 +41,63 @@ stages:
                 set -ex
                 python3 -m pytest tests/ -v --tb=short
 
-  # ── Stage 1: Build and Push ──────────────────────────────────────────
+  # ── Stage 1: Terraform Plan ────────────────────────────────────────────
+  - stage: TerraformPlan
+    displayName: 'Terraform Plan'
+    dependsOn: Test
+    jobs:
+      - job: Plan
+        pool:
+          name: 'Default'
+        steps:
+          - task: Bash@3
+            displayName: 'Terraform Init & Plan'
+            inputs:
+              targetType: inline
+              script: |
+                set -ex
+                cd terraform
+                terraform init -input=false
+                terraform plan -input=false -out=tfplan
+            env:
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)
+          - publish: terraform/tfplan
+            artifact: tfplan
+
+  # ── Stage 2: Terraform Apply ─────────────────────────────────────────
+  - stage: TerraformApply
+    displayName: 'Terraform Apply'
+    dependsOn: TerraformPlan
+    condition: succeeded()
+    jobs:
+      - job: Apply
+        pool:
+          name: 'Default'
+        steps:
+          - download: current
+            artifact: tfplan
+          - task: Bash@3
+            displayName: 'Terraform Apply'
+            inputs:
+              targetType: inline
+              script: |
+                set -ex
+                cd terraform
+                terraform init -input=false
+                terraform apply -input=false $(Pipeline.Workspace)/tfplan/tfplan
+            env:
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)
+
+  # ── Stage 3: Build and Push ──────────────────────────────────────────
   - stage: Build
     displayName: 'Build & Push Image'
-    dependsOn: Test
+    dependsOn: TerraformApply
     jobs:
       - job: BuildAndPush
         displayName: 'Build Docker image and push to Docker Hub'
@@ -77,7 +130,7 @@ stages:
                   -f $(Build.SourcesDirectory)/Dockerfile \
                   $(Build.SourcesDirectory)
 
-  # ── Stage 2: Deploy to AKS ──────────────────────────────────────────
+  # ── Stage 4: Deploy to AKS ──────────────────────────────────────────
   - stage: Deploy
     displayName: 'Deploy to AKS'
     dependsOn: Build

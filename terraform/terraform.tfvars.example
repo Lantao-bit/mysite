@@ -1,0 +1,44 @@
+# Azure region for all resources
+location = "eastus"
+
+# Name of the resource group
+resource_group_name = "portfolio-rg"
+
+# Name of the AKS cluster
+aks_cluster_name = "portfolio-aks"
+
+# DNS prefix for AKS FQDN
+dns_prefix = "portfolio"
+
+# VM size for node pool
+node_vm_size = "Standard_B2s"
+
+# Number of nodes (1-10)
+node_count = 1
+
+# OS disk size per node in GB (30-1024)
+os_disk_size_gb = 30
+
+# VNet CIDR block
+vnet_address_space = "10.0.0.0/16"
+
+# AKS subnet CIDR
+subnet_address_prefix = "10.0.1.0/24"
+
+# Kubernetes minor version
+kubernetes_version = "1.29"
+
+# AKS network plugin
+network_plugin = "kubenet"
+
+# Environment tag value
+environment = "dev"
+
+# Project tag value
+project_name = "portfolio"
+
+# Enable AKS HTTP app routing add-on
+enable_http_app_routing = false
+
+# Blob container for state file
+state_container_name = "tfstate"
