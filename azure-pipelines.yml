@@ -156,6 +156,23 @@ stages:
               command: apply
               arguments: '-f k8s/namespace.yaml'
 
+          - task: Bash@3
+            displayName: 'Create Docker Hub pull secret'
+            inputs:
+              targetType: inline
+              script: |
+                set -ex
+                az aks get-credentials --resource-group portfolio-rg --name portfolio-aks --overwrite-existing
+                kubectl create secret docker-registry dockerhub-creds \
+                  --namespace portfolio \
+                  --docker-server=https://index.docker.io/v1/ \
+                  --docker-username=$(DOCKERHUB_USERNAME) \
+                  --docker-password=$(DOCKERHUB_TOKEN) \
+                  --dry-run=client -o yaml | kubectl apply -f -
+            env:
+              DOCKERHUB_USERNAME: $(DOCKERHUB_USERNAME)
+              DOCKERHUB_TOKEN: $(DOCKERHUB_TOKEN)
+
           - task: Kubernetes@1
             displayName: 'Apply secret'
             inputs:
