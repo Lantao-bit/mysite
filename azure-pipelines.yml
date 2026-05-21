@@ -11,7 +11,6 @@ variables:
   dockerHubUser: 'ltyang'
   imageName: 'ltyang/portfolio'
   imageTag: '$(Build.BuildId)'
-  kubernetesServiceConnection: 'aks-portfolio-connection'
   namespace: 'portfolio'
 
 stages:
@@ -138,7 +137,7 @@ stages:
       - job: DeployToAKS
         displayName: 'Apply manifests to AKS'
         pool:
-          name: 'Default'   # vmImage: 'ubuntu-latest'
+          name: 'Default'
         steps:
           - task: Bash@3
             displayName: 'Replace image tag in manifest'
@@ -148,13 +147,26 @@ stages:
                 sed -i'' -e "s/__IMAGE_TAG__/$(imageTag)/g" k8s/deployment.yaml
                 cat k8s/deployment.yaml
 
-          - task: Kubernetes@1
+          - task: Bash@3
+            displayName: 'Get AKS credentials'
+            inputs:
+              targetType: inline
+              script: |
+                set -ex
+                az aks get-credentials --resource-group portfolio-rg --name portfolio-aks --overwrite-existing --admin
+            env:
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)
+
+          - task: Bash@3
             displayName: 'Apply namespace'
             inputs:
-              connectionType: 'Kubernetes Service Connection'
-              kubernetesServiceEndpoint: '$(kubernetesServiceConnection)'
-              command: apply
-              arguments: '-f k8s/namespace.yaml'
+              targetType: inline
+              script: |
+                set -ex
+                kubectl apply -f k8s/namespace.yaml
 
           - task: Bash@3
             displayName: 'Create Docker Hub pull secret'
@@ -162,7 +174,6 @@ stages:
               targetType: inline
               script: |
                 set -ex
-                az aks get-credentials --resource-group portfolio-rg --name portfolio-aks --overwrite-existing
                 kubectl create secret docker-registry dockerhub-creds \
                   --namespace portfolio \
                   --docker-server=https://index.docker.io/v1/ \
@@ -173,43 +184,43 @@ stages:
               DOCKERHUB_USERNAME: $(DOCKERHUB_USERNAME)
               DOCKERHUB_TOKEN: $(DOCKERHUB_TOKEN)
 
-          - task: Kubernetes@1
+          - task: Bash@3
             displayName: 'Apply secret'
             inputs:
-              connectionType: 'Kubernetes Service Connection'
-              kubernetesServiceEndpoint: '$(kubernetesServiceConnection)'
-              command: apply
-              arguments: '-f k8s/secret.yaml'
+              targetType: inline
+              script: |
+                set -ex
+                kubectl apply -f k8s/secret.yaml
 
-          - task: Kubernetes@1
+          - task: Bash@3
             displayName: 'Apply PVC'
             inputs:
-              connectionType: 'Kubernetes Service Connection'
-              kubernetesServiceEndpoint: '$(kubernetesServiceConnection)'
-              command: apply
-              arguments: '-f k8s/pvc.yaml'
+              targetType: inline
+              script: |
+                set -ex
+                kubectl apply -f k8s/pvc.yaml
 
-          - task: Kubernetes@1
+          - task: Bash@3
             displayName: 'Apply deployment'
             inputs:
-              connectionType: 'Kubernetes Service Connection'
-              kubernetesServiceEndpoint: '$(kubernetesServiceConnection)'
-              command: apply
-              arguments: '-f k8s/deployment.yaml'
+              targetType: inline
+              script: |
+                set -ex
+                kubectl apply -f k8s/deployment.yaml
 
-          - task: Kubernetes@1
+          - task: Bash@3
             displayName: 'Apply service'
             inputs:
-              connectionType: 'Kubernetes Service Connection'
-              kubernetesServiceEndpoint: '$(kubernetesServiceConnection)'
-              command: apply
-              arguments: '-f k8s/service.yaml'
+              targetType: inline
+              script: |
+                set -ex
+                kubectl apply -f k8s/service.yaml
 
-          - task: Kubernetes@1
+          - task: Bash@3
             displayName: 'Check rollout status'
             continueOnError: true
             inputs:
-              connectionType: 'Kubernetes Service Connection'
-              kubernetesServiceEndpoint: '$(kubernetesServiceConnection)'
-              command: 'rollout'
-              arguments: 'status deployment/portfolio -n $(namespace) --timeout=180s'
+              targetType: inline
+              script: |
+                set -ex
+                kubectl rollout status deployment/portfolio -n portfolio --timeout=180s
