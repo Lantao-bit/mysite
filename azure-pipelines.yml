@@ -93,10 +93,106 @@ stages:
               ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
               ARM_TENANT_ID: $(ARM_TENANT_ID)
 
-  # ── Stage 3: Build and Push ──────────────────────────────────────────
+  # ── Stage 3: Infrastructure Setup (Ingress + cert-manager) ────────────
+  - stage: InfraSetup
+    displayName: 'Setup Ingress & cert-manager'
+    dependsOn: TerraformApply
+    jobs:
+      - job: SetupIngress
+        displayName: 'Install ingress-nginx and cert-manager via Helm'
+        pool:
+          name: 'Default'
+        steps:
+          - task: Bash@3
+            displayName: 'Get AKS credentials'
+            inputs:
+              targetType: inline
+              script: |
+                set -ex
+                az aks get-credentials --resource-group portfolio-rg --name portfolio-aks --overwrite-existing --admin
+            env:
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)
+
+          - task: Bash@3
+            displayName: 'Get static IP from Terraform output'
+            inputs:
+              targetType: inline
+              script: |
+                set -ex
+                cd terraform
+                terraform init -input=false
+                STATIC_IP=$(terraform output -raw ingress_public_ip)
+                echo "Static IP: $STATIC_IP"
+                echo "##vso[task.setvariable variable=INGRESS_STATIC_IP]$STATIC_IP"
+            env:
+              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)
+
+          - task: Bash@3
+            displayName: 'Install NGINX Ingress Controller'
+            inputs:
+              targetType: inline
+              script: |
+                set -ex
+                helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+                helm repo update
+                helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+                  --namespace ingress-nginx \
+                  --create-namespace \
+                  --set controller.replicaCount=1 \
+                  --set controller.service.loadBalancerIP=$(INGRESS_STATIC_IP) \
+                  --set controller.service.annotations."service\.beta\.kubernetes\.io/azure-load-balancer-resource-group"=portfolio-rg \
+                  --set controller.service.annotations."service\.beta\.kubernetes\.io/azure-load-balancer-health-probe-request-path"=/healthz
+
+          - task: Bash@3
+            displayName: 'Install cert-manager'
+            inputs:
+              targetType: inline
+              script: |
+                set -ex
+                helm repo add jetstack https://charts.jetstack.io
+                helm repo update
+                helm upgrade --install cert-manager jetstack/cert-manager \
+                  --namespace cert-manager \
+                  --create-namespace \
+                  --set crds.enabled=true
+
+          - task: Bash@3
+            displayName: 'Wait for cert-manager webhook'
+            inputs:
+              targetType: inline
+              script: |
+                set -ex
+                kubectl -n cert-manager wait --for=condition=available deployment/cert-manager-webhook --timeout=120s
+
+          - task: Bash@3
+            displayName: 'Apply ClusterIssuers and Ingress'
+            inputs:
+              targetType: inline
+              script: |
+                set -ex
+                kubectl apply -f k8s/ingress/cert-manager-issuer.yaml
+                kubectl apply -f k8s/ingress/ingress.yaml
+
+          - task: Bash@3
+            displayName: 'Print ingress external IP'
+            inputs:
+              targetType: inline
+              script: |
+                echo "============================================"
+                echo "  Ingress Static IP: $(INGRESS_STATIC_IP)"
+                echo "  Domain: https://orchidpay.io"
+                echo "============================================"
+
+  # ── Stage 4: Build and Push ──────────────────────────────────────────
   - stage: Build
     displayName: 'Build & Push Image'
-    dependsOn: TerraformApply
+    dependsOn: InfraSetup
     jobs:
       - job: BuildAndPush
         displayName: 'Build Docker image and push to Docker Hub'

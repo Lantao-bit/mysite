@@ -97,3 +97,9 @@ variable "state_container_name" {
   default     = "tfstate"
   description = "Blob container name for Terraform state file"
 }
+
+variable "domain_name" {
+  type        = string
+  default     = "orchidpay.io"
+  description = "Domain name for the portfolio site (used for documentation; DNS is managed at registrar)"
+}

@@ -22,6 +22,22 @@ resource "azurerm_subnet" "aks" {
   address_prefixes     = [var.subnet_address_prefix]
 }
 
+# Static public IP for the NGINX Ingress Controller LoadBalancer.
+# This IP survives cluster recreation so DNS never needs updating.
+resource "azurerm_public_ip" "ingress" {
+  name                = "${var.aks_cluster_name}-ingress-ip"
+  location            = azurerm_resource_group.portfolio.location
+  resource_group_name = azurerm_resource_group.portfolio.name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+
+  tags = {
+    environment = var.environment
+    project     = var.project_name
+    purpose     = "ingress-nginx"
+  }
+}
+
 resource "azurerm_kubernetes_cluster" "portfolio" {
   name                = var.aks_cluster_name
   location            = azurerm_resource_group.portfolio.location
@@ -56,4 +72,11 @@ resource "azurerm_kubernetes_cluster" "portfolio" {
     environment = var.environment
     project     = var.project_name
   }
+}
+
+# Grant the AKS cluster identity permission to use the static IP in this resource group
+resource "azurerm_role_assignment" "aks_network_contributor" {
+  scope                = azurerm_resource_group.portfolio.id
+  role_definition_name = "Network Contributor"
+  principal_id         = azurerm_kubernetes_cluster.portfolio.identity[0].principal_id
 }
