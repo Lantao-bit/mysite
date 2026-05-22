@@ -163,8 +163,7 @@ stages:
                   --namespace cert-manager \
                   --create-namespace \
                   --set crds.enabled=true \
-                  --set global.leaderElection.namespace=cert-manager \
-                  --set enableServerSideApply=false
+                  --set global.leaderElection.namespace=cert-manager
 
           - task: Bash@3
             displayName: 'Wait for cert-manager webhook'
