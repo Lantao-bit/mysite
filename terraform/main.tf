@@ -74,9 +74,12 @@ resource "azurerm_kubernetes_cluster" "portfolio" {
   }
 }
 
-# Grant the AKS cluster identity permission to use the static IP in this resource group
-resource "azurerm_role_assignment" "aks_network_contributor" {
-  scope                = azurerm_resource_group.portfolio.id
-  role_definition_name = "Network Contributor"
-  principal_id         = azurerm_kubernetes_cluster.portfolio.identity[0].principal_id
-}
+# NOTE: The AKS managed identity needs "Network Contributor" on this resource group
+# to bind the static IP to the ingress LoadBalancer. This role assignment must be
+# created manually (requires Owner/User Access Administrator permissions):
+#
+#   AKS_IDENTITY=$(az aks show --name portfolio-aks --resource-group portfolio-rg --query "identity.principalId" -o tsv)
+#   az role assignment create --assignee "$AKS_IDENTITY" --role "Network Contributor" \
+#     --scope /subscriptions/<SUB_ID>/resourceGroups/portfolio-rg
+#
+# This only needs to be done once after each cluster creation.
