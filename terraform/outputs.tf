@@ -30,20 +30,18 @@ output "get_credentials_command" {
 }
 
 output "ingress_helm_commands" {
-  description = "Helm install commands for nginx ingress controller and cert-manager (using static IP)"
+  description = "Helm install commands for nginx ingress controller and cert-manager"
   value       = <<-EOT
     # Add Helm repositories
     helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
     helm repo add jetstack https://charts.jetstack.io
     helm repo update
 
-    # Install nginx ingress controller with static IP
+    # Install nginx ingress controller (dynamic IP, Cloudflare handles DNS)
     helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
       --namespace ingress-nginx \
       --create-namespace \
-      --set controller.replicaCount=1 \
-      --set controller.service.loadBalancerIP=${azurerm_public_ip.ingress.ip_address} \
-      --set controller.service.annotations."service\.beta\.kubernetes\.io/azure-load-balancer-resource-group"=${azurerm_resource_group.portfolio.name}
+      --set controller.replicaCount=1
 
     # Install cert-manager for TLS certificates
     helm upgrade --install cert-manager jetstack/cert-manager \
@@ -51,11 +49,6 @@ output "ingress_helm_commands" {
       --create-namespace \
       --set crds.enabled=true
   EOT
-}
-
-output "ingress_public_ip" {
-  description = "Static public IP for the NGINX Ingress Controller. Point your domain's A record here. This IP persists across cluster recreations."
-  value       = azurerm_public_ip.ingress.ip_address
 }
 
 output "load_balancer_ip_command" {

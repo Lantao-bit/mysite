@@ -100,6 +100,6 @@ variable "state_container_name" {
 
 variable "domain_name" {
   type        = string
-  default     = "orchidpay.io"
-  description = "Domain name for the portfolio site (used for documentation; DNS is managed at registrar)"
+  default     = "orchidflow.io"
+  description = "Domain name for the portfolio site (DNS managed via Cloudflare)"
 }

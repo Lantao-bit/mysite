@@ -93,13 +93,13 @@ stages:
               ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
               ARM_TENANT_ID: $(ARM_TENANT_ID)
 
-  # ── Stage 3: Infrastructure Setup (Ingress + cert-manager) ────────────
+  # ── Stage 3: Infrastructure Setup (Ingress + cert-manager + Cloudflare DNS) ──
   - stage: InfraSetup
     displayName: 'Setup Ingress & cert-manager'
     dependsOn: TerraformApply
     jobs:
       - job: SetupIngress
-        displayName: 'Install ingress-nginx and cert-manager via Helm'
+        displayName: 'Install ingress-nginx, cert-manager, update Cloudflare DNS'
         pool:
           name: 'Default'
         steps:
@@ -110,23 +110,6 @@ stages:
               script: |
                 set -ex
                 az aks get-credentials --resource-group portfolio-rg --name portfolio-aks --overwrite-existing --admin
-            env:
-              ARM_CLIENT_ID: $(ARM_CLIENT_ID)
-              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
-              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
-              ARM_TENANT_ID: $(ARM_TENANT_ID)
-
-          - task: Bash@3
-            displayName: 'Get static IP from Terraform output'
-            inputs:
-              targetType: inline
-              script: |
-                set -ex
-                cd terraform
-                terraform init -input=false
-                STATIC_IP=$(terraform output -raw ingress_public_ip)
-                echo "Static IP: $STATIC_IP"
-                echo "##vso[task.setvariable variable=INGRESS_STATIC_IP]$STATIC_IP"
             env:
               ARM_CLIENT_ID: $(ARM_CLIENT_ID)
               ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
@@ -145,9 +128,87 @@ stages:
                   --namespace ingress-nginx \
                   --create-namespace \
                   --set controller.replicaCount=1 \
-                  --set controller.service.loadBalancerIP=$(INGRESS_STATIC_IP) \
-                  --set controller.service.annotations."service\.beta\.kubernetes\.io/azure-load-balancer-resource-group"=portfolio-rg \
                   --set controller.service.annotations."service\.beta\.kubernetes\.io/azure-load-balancer-health-probe-request-path"=/healthz
+
+          - task: Bash@3
+            displayName: 'Wait for ingress external IP'
+            inputs:
+              targetType: inline
+              script: |
+                set -ex
+                echo "Waiting for external IP assignment..."
+                for i in $(seq 1 30); do
+                  IP=$(kubectl -n ingress-nginx get svc ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+                  if [ -n "$IP" ] && [ "$IP" != "" ]; then
+                    echo "External IP: $IP"
+                    echo "##vso[task.setvariable variable=INGRESS_IP]$IP"
+                    exit 0
+                  fi
+                  echo "  Attempt $i/30 - IP not ready yet..."
+                  sleep 10
+                done
+                echo "ERROR: Timed out waiting for external IP"
+                exit 1
+
+          - task: Bash@3
+            displayName: 'Update Cloudflare DNS'
+            inputs:
+              targetType: inline
+              script: |
+                set -ex
+                ZONE_ID="b2b28181b5a6b63dbc268066c88e966e"
+                IP="$(INGRESS_IP)"
+                echo "Updating Cloudflare DNS for orchidflow.io -> $IP"
+
+                # Update or create A record for @ (root domain)
+                ROOT_RECORD_ID=$(curl -s -X GET \
+                  "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?type=A&name=orchidflow.io" \
+                  -H "Authorization: Bearer $(CLOUDFLARE_API_TOKEN)" \
+                  -H "Content-Type: application/json" | python3 -c "import sys,json; r=json.load(sys.stdin)['result']; print(r[0]['id'] if r else '')")
+
+                if [ -n "$ROOT_RECORD_ID" ]; then
+                  echo "Updating existing root A record..."
+                  curl -s -X PUT \
+                    "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$ROOT_RECORD_ID" \
+                    -H "Authorization: Bearer $(CLOUDFLARE_API_TOKEN)" \
+                    -H "Content-Type: application/json" \
+                    --data "{\"type\":\"A\",\"name\":\"orchidflow.io\",\"content\":\"$IP\",\"ttl\":300,\"proxied\":false}"
+                else
+                  echo "Creating root A record..."
+                  curl -s -X POST \
+                    "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
+                    -H "Authorization: Bearer $(CLOUDFLARE_API_TOKEN)" \
+                    -H "Content-Type: application/json" \
+                    --data "{\"type\":\"A\",\"name\":\"orchidflow.io\",\"content\":\"$IP\",\"ttl\":300,\"proxied\":false}"
+                fi
+
+                # Update or create A record for www
+                WWW_RECORD_ID=$(curl -s -X GET \
+                  "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?type=A&name=www.orchidflow.io" \
+                  -H "Authorization: Bearer $(CLOUDFLARE_API_TOKEN)" \
+                  -H "Content-Type: application/json" | python3 -c "import sys,json; r=json.load(sys.stdin)['result']; print(r[0]['id'] if r else '')")
+
+                if [ -n "$WWW_RECORD_ID" ]; then
+                  echo "Updating existing www A record..."
+                  curl -s -X PUT \
+                    "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$WWW_RECORD_ID" \
+                    -H "Authorization: Bearer $(CLOUDFLARE_API_TOKEN)" \
+                    -H "Content-Type: application/json" \
+                    --data "{\"type\":\"A\",\"name\":\"www.orchidflow.io\",\"content\":\"$IP\",\"ttl\":300,\"proxied\":false}"
+                else
+                  echo "Creating www A record..."
+                  curl -s -X POST \
+                    "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records" \
+                    -H "Authorization: Bearer $(CLOUDFLARE_API_TOKEN)" \
+                    -H "Content-Type: application/json" \
+                    --data "{\"type\":\"A\",\"name\":\"www.orchidflow.io\",\"content\":\"$IP\",\"ttl\":300,\"proxied\":false}"
+                fi
+
+                echo ""
+                echo "DNS updated: orchidflow.io -> $IP"
+                echo "DNS updated: www.orchidflow.io -> $IP"
+            env:
+              CLOUDFLARE_API_TOKEN: $(CLOUDFLARE_API_TOKEN)
 
           - task: Bash@3
             displayName: 'Install cert-manager'
@@ -184,13 +245,14 @@ stages:
                 kubectl apply -f k8s/ingress/ingress.yaml
 
           - task: Bash@3
-            displayName: 'Print ingress external IP'
+            displayName: 'Print summary'
             inputs:
               targetType: inline
               script: |
                 echo "============================================"
-                echo "  Ingress Static IP: $(INGRESS_STATIC_IP)"
-                echo "  Domain: https://orchidpay.io"
+                echo "  Ingress IP: $(INGRESS_IP)"
+                echo "  Domain: https://orchidflow.io"
+                echo "  Cloudflare DNS: Updated automatically"
                 echo "============================================"
 
   # ── Stage 4: Build and Push ──────────────────────────────────────────

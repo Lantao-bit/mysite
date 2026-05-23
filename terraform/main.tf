@@ -22,22 +22,6 @@ resource "azurerm_subnet" "aks" {
   address_prefixes     = [var.subnet_address_prefix]
 }
 
-# Static public IP for the NGINX Ingress Controller LoadBalancer.
-# This IP survives cluster recreation so DNS never needs updating.
-resource "azurerm_public_ip" "ingress" {
-  name                = "${var.aks_cluster_name}-ingress-ip"
-  location            = azurerm_resource_group.portfolio.location
-  resource_group_name = azurerm_resource_group.portfolio.name
-  allocation_method   = "Static"
-  sku                 = "Standard"
-
-  tags = {
-    environment = var.environment
-    project     = var.project_name
-    purpose     = "ingress-nginx"
-  }
-}
-
 resource "azurerm_kubernetes_cluster" "portfolio" {
   name                = var.aks_cluster_name
   location            = azurerm_resource_group.portfolio.location
@@ -73,13 +57,3 @@ resource "azurerm_kubernetes_cluster" "portfolio" {
     project     = var.project_name
   }
 }
-
-# NOTE: The AKS managed identity needs "Network Contributor" on this resource group
-# to bind the static IP to the ingress LoadBalancer. This role assignment must be
-# created manually (requires Owner/User Access Administrator permissions):
-#
-#   AKS_IDENTITY=$(az aks show --name portfolio-aks --resource-group portfolio-rg --query "identity.principalId" -o tsv)
-#   az role assignment create --assignee "$AKS_IDENTITY" --role "Network Contributor" \
-#     --scope /subscriptions/<SUB_ID>/resourceGroups/portfolio-rg
-#
-# This only needs to be done once after each cluster creation.
