@@ -38,7 +38,16 @@ stages:
               targetType: inline
               script: |
                 set -ex
-                python3 -m pytest tests/ -v --tb=short
+                python3 -m pytest tests/ -v --tb=short \
+                  --cov=portfolio \
+                  --cov-report=term-missing \
+                  --cov-report=xml:coverage.xml \
+                  --cov-fail-under=80
+
+          - task: PublishCodeCoverageResults@2
+            displayName: 'Publish code coverage'
+            inputs:
+              summaryFileLocation: '$(System.DefaultWorkingDirectory)/coverage.xml'
 
   # ── Stage 1: Terraform Plan ────────────────────────────────────────────
   - stage: TerraformPlan

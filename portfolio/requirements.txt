@@ -7,4 +7,5 @@ email-validator>=2.0
 Werkzeug>=3.0
 gunicorn>=22.0
 pytest>=8.0
+pytest-cov>=5.0
 hypothesis>=6.0
