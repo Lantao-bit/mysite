@@ -156,7 +156,7 @@ stages:
               targetType: inline
               script: |
                 set -ex
-                ZONE_ID="b2b28181b5a6b63dbc268066c88e966e"
+                ZONE_ID="$(CLOUDFLARE_ZONE_ID)"
                 IP="$(INGRESS_IP)"
                 echo "Updating Cloudflare DNS for orchidflow.io -> $IP"
 
@@ -209,6 +209,7 @@ stages:
                 echo "DNS updated: www.orchidflow.io -> $IP"
             env:
               CLOUDFLARE_API_TOKEN: $(CLOUDFLARE_API_TOKEN)
+              CLOUDFLARE_ZONE_ID: $(CLOUDFLARE_ZONE_ID)
 
           - task: Bash@3
             displayName: 'Install cert-manager'

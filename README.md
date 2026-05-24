@@ -2,6 +2,8 @@
 
 A single-page personal portfolio website built with Flask, SQLAlchemy, and Bootstrap 5. Showcases professional information, project portfolio, and a visitor comment system with user authentication.
 
+**Live:** https://orchidflow.io
+
 ## Features
 
 - Professional profile section with bio, skills, and contact links
@@ -10,13 +12,18 @@ A single-page personal portfolio website built with Flask, SQLAlchemy, and Boots
 - Authenticated visitors can leave comments
 - Comments displayed newest-first in a sidebar layout
 - SQLite database with Flask-Migrate for schema versioning
+- Admin panel for portfolio entry management (CRUD + JSON import/export)
 
 ## Tech Stack
 
 - **Backend:** Python 3.14, Flask 3.x, SQLAlchemy, Flask-Login, Flask-WTF
 - **Frontend:** Bootstrap 5 (CDN), Jinja2 templates
 - **Database:** SQLite with Flask-Migrate / Alembic
-- **Testing:** pytest, Hypothesis
+- **Testing:** pytest, Hypothesis (property-based testing)
+- **Infrastructure:** Terraform, AKS, Docker, Helm
+- **CI/CD:** Azure Pipelines (Test → Terraform → Infra Setup → Build → Deploy)
+- **DNS/TLS:** Cloudflare DNS (auto-updated), Let's Encrypt via cert-manager
+- **Container Registry:** Docker Hub
 
 ## Running the App
 
@@ -126,7 +133,7 @@ chmod +x deploy.sh
 **Manual step-by-step:**
 
 ```bash
-# Build the image locally (Docker Desktop K8s uses local images)
+# Build the image locally
 docker build -t portfolio:latest .
 
 # Apply manifests in order
@@ -156,22 +163,69 @@ kubectl -n portfolio describe pod <pod-name>   # debug a pod
 kubectl delete namespace portfolio
 ```
 
-> **Note:** The K8s deployment.yaml uses `ltyang/portfolio:__IMAGE_TAG__` as the image reference. The `deploy.sh` script uses a locally-built `portfolio:latest` image. For local K8s, you may need to update the image field in `k8s/deployment.yaml` to `portfolio:latest` and set `imagePullPolicy: Never`.
+> **Important:** Make sure your kubectl context is set to `docker-desktop` before running tear-down commands. If your context is pointing to AKS (`portfolio-aks-admin`), this will delete the production deployment. Check with `kubectl config current-context` and switch with `kubectl config use-context docker-desktop`. Use 'kubectl config get-contexts' or 'kubectl config get-contexts -o name' to list all available contexts.
+
+> **Note:** The K8s deployment.yaml uses `ltyang/portfolio:__IMAGE_TAG__` as the image reference. For local K8s, update the image field to `portfolio:latest` and set `imagePullPolicy: Never`.
 
 ---
 
-## CI/CD (Azure Pipelines → AKS)
+## Production Deployment (AKS + Terraform + Cloudflare)
+
+The production environment is fully automated via Azure Pipelines.
+
+### Architecture
+
+```
+User → Cloudflare DNS → Azure Load Balancer → NGINX Ingress Controller → Flask App (AKS Pod)
+                                                      ↓
+                                              cert-manager → Let's Encrypt (auto TLS)
+```
+
+### CI/CD Pipeline Stages
 
 The `azure-pipelines.yml` pipeline runs automatically on push to `main`:
 
-1. **Build stage** — Builds a linux/amd64 Docker image and pushes to Docker Hub (`ltyang/portfolio:<build-id>`)
-2. **Deploy stage** — Applies K8s manifests to AKS with the new image tag
+1. **Test** — Runs pytest (unit + property-based tests)
+2. **Terraform Plan** — Plans infrastructure changes
+3. **Terraform Apply** — Creates/updates AKS cluster, VNet, subnet
+4. **Infra Setup** — Installs NGINX Ingress Controller + cert-manager via Helm, updates Cloudflare DNS with the new ingress IP
+5. **Build & Push** — Builds linux/amd64 Docker image, pushes to Docker Hub
+6. **Deploy** — Applies K8s manifests to AKS
 
-This is not a local run method, but it's how the app reaches production. See `azure-pipelines.yml` for full details.
+### Infrastructure (Terraform)
+
+Managed resources in `terraform/`:
+- Resource group, VNet, subnet
+- AKS cluster (1 node, Standard_dc2ads_v5)
+
+### DNS & TLS
+
+- **Cloudflare** manages DNS for `orchidflow.io` (auto-updated by pipeline)
+- **cert-manager** + Let's Encrypt provides trusted HTTPS certificates (auto-renewed)
+- DNS records are set to "DNS only" (no Cloudflare proxy) for cert-manager HTTP-01 challenges
+
+### Pipeline Variables (Azure DevOps)
+
+| Variable | Secret | Purpose |
+|----------|--------|---------|
+| ARM_CLIENT_ID | No | Azure service principal |
+| ARM_CLIENT_SECRET | Yes | Azure service principal |
+| ARM_SUBSCRIPTION_ID | No | Azure subscription |
+| ARM_TENANT_ID | No | Azure tenant |
+| DOCKERHUB_USERNAME | No | Docker Hub login |
+| DOCKERHUB_TOKEN | Yes | Docker Hub access token |
+| CLOUDFLARE_API_TOKEN | Yes | Cloudflare DNS API |
+| CLOUDFLARE_ZONE_ID | No | Cloudflare zone for orchidflow.io |
+
+### Cost Management
+
+- **Stop cluster** (keep resources, stop billing for compute): `az aks stop --name portfolio-aks --resource-group portfolio-rg`
+- **Start cluster**: `az aks start --name portfolio-aks --resource-group portfolio-rg`
+- **Full teardown**: `terraform destroy` (pipeline will recreate everything on next push)
 
 ---
 
-## Running Tests 
+## Running Tests
 
 **Prerequisites:** Virtual environment activated with dependencies installed (see Option 1 above).
 
@@ -219,7 +273,7 @@ flask db upgrade
 
 ```
 portfolio/
-├── app.py              # Flask app factory
+├── app.py              # Flask app factory (with ProxyFix for HTTPS)
 ├── models.py           # SQLAlchemy models (User, Project, Comment)
 ├── db.py               # Data access layer (returns dicts)
 ├── auth.py             # Authentication logic
@@ -236,11 +290,21 @@ tests/
 └── test_property_project_crud.py # Property-based CRUD tests
 k8s/
 ├── deploy.sh           # Local K8s deployment script
-├── namespace.yaml      # Namespace definition
-├── secret.yaml         # Secret for app config
-├── pvc.yaml            # Persistent volume claim for SQLite
-├── deployment.yaml     # Deployment manifest
-└── service.yaml        # LoadBalancer service
+├── ingress/            # Ingress + cert-manager manifests
+│   ├── setup-ingress.sh
+│   ├── cert-manager-issuer.yaml
+│   └── ingress.yaml
+├── namespace.yaml
+├── secret.yaml
+├── pvc.yaml
+├── deployment.yaml
+└── service.yaml
+terraform/
+├── main.tf             # AKS cluster, VNet, subnet
+├── variables.tf        # Configurable parameters
+├── outputs.tf          # Useful output values
+├── backend.tf          # Remote state configuration
+└── terraform.tfvars.example
 ```
 
 ## Deployment (PythonAnywhere)
