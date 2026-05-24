@@ -39,7 +39,6 @@ stages:
               script: |
                 set -ex
                 python3 -m pytest tests/ -v --tb=short \
-                  -W ignore::ResourceWarning \
                   --cov=portfolio \
                   --cov-report=term-missing \
                   --cov-fail-under=80
