@@ -33,21 +33,16 @@ stages:
                 python3 -m pip install -r portfolio/requirements.txt
 
           - task: Bash@3
-            displayName: 'Run test suite'
+            displayName: 'Run test suite with coverage'
             inputs:
               targetType: inline
               script: |
                 set -ex
                 python3 -m pytest tests/ -v --tb=short \
+                  -W ignore::ResourceWarning \
                   --cov=portfolio \
                   --cov-report=term-missing \
-                  --cov-report=xml:coverage.xml \
                   --cov-fail-under=80
-
-          - task: PublishCodeCoverageResults@2
-            displayName: 'Publish code coverage'
-            inputs:
-              summaryFileLocation: '$(System.DefaultWorkingDirectory)/coverage.xml'
 
   # ── Stage 1: Terraform Plan ────────────────────────────────────────────
   - stage: TerraformPlan
