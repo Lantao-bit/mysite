@@ -138,6 +138,256 @@ Internet
 
 ---
 
+## Architecture Diagrams
+
+Detailed Mermaid diagrams showing logical linkage, relationships, and key settings for each deployment option.
+
+### Diagram 1: Local Python Development
+
+```mermaid
+graph LR
+    subgraph "Developer Machine"
+        Browser["Browser<br/>localhost:5000"]
+        Flask["Flask Dev Server<br/>(flask run --debug)"]
+        SQLite["SQLite<br/>portfolio.db"]
+    end
+
+    Browser -->|"HTTP GET /"| Flask
+    Flask -->|"SQLAlchemy queries"| SQLite
+
+    style Flask fill:#3776ab,color:#fff
+    style SQLite fill:#003b57,color:#fff
+```
+
+**Key settings:**
+- `FLASK_APP=portfolio.app`
+- `flask run --debug` enables hot-reload
+- Database auto-created at `./portfolio.db` or `$DATABASE_PATH`
+
+---
+
+### Diagram 2: Docker Compose
+
+```mermaid
+graph LR
+    subgraph "Developer Machine"
+        Browser["Browser<br/>localhost:8080"]
+        subgraph "Docker Container"
+            Gunicorn["Gunicorn<br/>0.0.0.0:5000<br/>(2 workers)"]
+            Flask2["Flask App"]
+            SQLite2["SQLite<br/>/app/data/portfolio.db"]
+        end
+        Volume["Host Volume<br/>./data/"]
+    end
+
+    Browser -->|"port 8080→5000"| Gunicorn
+    Gunicorn --> Flask2
+    Flask2 --> SQLite2
+    SQLite2 -.->|"volume mount"| Volume
+
+    style Gunicorn fill:#2496ed,color:#fff
+    style Flask2 fill:#3776ab,color:#fff
+```
+
+**Key settings:**
+- `docker-compose.yml`: ports `8080:5000`
+- Volume: `./data:/app/data` (data persists across restarts)
+- `SECRET_KEY` and `DATABASE_PATH` set via environment variables
+
+---
+
+### Diagram 3: Local Kubernetes (Docker Desktop)
+
+```mermaid
+graph TB
+    subgraph "Docker Desktop + Kubernetes"
+        subgraph "portfolio namespace"
+            Svc["Service<br/>(LoadBalancer)<br/>port 80→5000"]
+            Deploy["Deployment<br/>(1 replica)"]
+            Pod["Pod<br/>Gunicorn + Flask"]
+            PVC["PVC<br/>(SQLite storage)"]
+            Secret["Secret<br/>(SECRET_KEY)"]
+        end
+    end
+
+    Browser["Browser<br/>localhost:80"] -->|"HTTP"| Svc
+    Svc --> Pod
+    Pod -->|"mount"| PVC
+    Pod -->|"env from"| Secret
+    Deploy -->|"manages"| Pod
+
+    style Svc fill:#326ce5,color:#fff
+    style Pod fill:#3776ab,color:#fff
+    style PVC fill:#f5a623,color:#000
+```
+
+**Key settings:**
+- `kubectl config use-context docker-desktop` (target local cluster)
+- `imagePullPolicy: Never` (use locally-built image)
+- Service type: `LoadBalancer` (Docker Desktop maps to localhost)
+- PVC for SQLite persistence across pod restarts
+
+---
+
+### Diagram 4: Production (AKS + Full Automation)
+
+```mermaid
+graph TB
+    User["User Browser<br/>https://orchidflow.io"]
+
+    subgraph "Cloudflare"
+        DNS["DNS<br/>A record → Ingress IP<br/>(auto-updated by pipeline)"]
+    end
+
+    subgraph "Azure Cloud"
+        subgraph "portfolio-rg (Terraform-managed)"
+            subgraph "AKS Cluster (Standard_dc2ads_v5)"
+                subgraph "ingress-nginx namespace"
+                    Ingress["NGINX Ingress Controller<br/>(LoadBalancer)<br/>External IP"]
+                end
+                subgraph "cert-manager namespace"
+                    CertMgr["cert-manager<br/>→ Let's Encrypt"]
+                end
+                subgraph "portfolio namespace"
+                    IngressRes["Ingress Resource<br/>host: orchidflow.io<br/>TLS: portfolio-tls"]
+                    AppSvc["Service<br/>(ClusterIP:80)"]
+                    AppPod["Pod<br/>Gunicorn + Flask"]
+                    AppPVC["PVC<br/>(Azure Disk)"]
+                    TLSSecret["TLS Secret<br/>(auto-provisioned)"]
+                end
+            end
+        end
+    end
+
+    User -->|"HTTPS"| DNS
+    DNS -->|"resolve"| Ingress
+    Ingress -->|"route by host"| IngressRes
+    IngressRes -->|"backend"| AppSvc
+    AppSvc --> AppPod
+    AppPod -->|"mount"| AppPVC
+    CertMgr -->|"provisions cert"| TLSSecret
+    IngressRes -->|"uses"| TLSSecret
+
+    style DNS fill:#f38020,color:#fff
+    style Ingress fill:#326ce5,color:#fff
+    style CertMgr fill:#0d6efd,color:#fff
+    style AppPod fill:#3776ab,color:#fff
+```
+
+**Key settings:**
+- Ingress annotation: `cert-manager.io/cluster-issuer: letsencrypt-prod`
+- Ingress annotation: `nginx.ingress.kubernetes.io/ssl-redirect: "true"`
+- TLS hosts: `orchidflow.io`, `www.orchidflow.io`
+- cert-manager solver: HTTP-01 via ingress class `nginx`
+- Cloudflare DNS: `proxied: false` (DNS only, for HTTP-01 challenge)
+
+---
+
+### Diagram 5: CI/CD Pipeline (End-to-End)
+
+```mermaid
+graph TB
+    subgraph "Developer"
+        Push["git push to main"]
+    end
+
+    subgraph "Azure DevOps Pipeline"
+        Test["Stage: Test<br/>pytest (56 tests)"]
+        TFPlan["Stage: Terraform Plan<br/>terraform plan"]
+        TFApply["Stage: Terraform Apply<br/>terraform apply<br/>(AKS, VNet, Subnet)"]
+        Infra["Stage: Infra Setup<br/>• helm: ingress-nginx<br/>• helm: cert-manager<br/>• Cloudflare DNS update<br/>• kubectl: issuers + ingress"]
+        Build["Stage: Build & Push<br/>docker buildx<br/>→ Docker Hub"]
+        Deploy["Stage: Deploy<br/>kubectl apply<br/>(namespace, secrets,<br/>PVC, deployment, service)"]
+    end
+
+    subgraph "External Services"
+        DockerHub["Docker Hub<br/>ltyang/portfolio:tag"]
+        CF["Cloudflare API<br/>Update A records"]
+        AKS["AKS Cluster<br/>Running app"]
+    end
+
+    Push --> Test
+    Test -->|"pass"| TFPlan
+    TFPlan --> TFApply
+    TFApply --> Infra
+    Infra -->|"update DNS"| CF
+    Infra --> Build
+    Build -->|"push image"| DockerHub
+    Build --> Deploy
+    Deploy -->|"pull image"| DockerHub
+    Deploy -->|"apply manifests"| AKS
+
+    style Test fill:#28a745,color:#fff
+    style TFApply fill:#7b42bc,color:#fff
+    style Infra fill:#0d6efd,color:#fff
+    style Build fill:#2496ed,color:#fff
+    style Deploy fill:#326ce5,color:#fff
+```
+
+**Key settings:**
+- Pipeline trigger: `branches: include: [main]`
+- Pool: `name: 'Default'` (self-hosted macOS agent)
+- Image tag: `$(Build.BuildId)` (unique per build)
+- Terraform state: remote backend (Azure Blob Storage)
+- Secrets: pipeline variables (ARM_*, DOCKERHUB_*, CLOUDFLARE_*)
+
+---
+
+### Diagram 6: Request Flow (HTTPS)
+
+```mermaid
+sequenceDiagram
+    participant User as User Browser
+    participant CF as Cloudflare DNS
+    participant LB as Azure Load Balancer
+    participant IC as NGINX Ingress Controller
+    participant App as Flask App Pod
+
+    User->>CF: DNS lookup orchidflow.io
+    CF-->>User: IP: x.x.x.x
+    User->>LB: HTTPS request (port 443)
+    LB->>IC: Forward to ingress controller
+    IC->>IC: TLS termination (portfolio-tls cert)
+    IC->>App: HTTP request (port 5000)
+    App-->>IC: HTML response
+    IC-->>LB: Encrypted response
+    LB-->>User: HTTPS response
+```
+
+**Key settings:**
+- Flask `ProxyFix` middleware trusts `X-Forwarded-Proto` header
+- `url_for()` generates `https://` URLs correctly behind proxy
+- cert-manager auto-renews certificate before expiry
+
+---
+
+### Diagram 7: Terraform Resource Relationships
+
+```mermaid
+graph TB
+    RG["azurerm_resource_group<br/>portfolio-rg"]
+    VNet["azurerm_virtual_network<br/>portfolio-rg-vnet<br/>10.0.0.0/16"]
+    Subnet["azurerm_subnet<br/>aks-subnet<br/>10.0.1.0/24"]
+    AKS["azurerm_kubernetes_cluster<br/>portfolio-aks<br/>Standard_dc2ads_v5 × 1 node"]
+
+    RG --> VNet
+    RG --> AKS
+    VNet --> Subnet
+    Subnet -->|"vnet_subnet_id"| AKS
+
+    style RG fill:#7b42bc,color:#fff
+    style AKS fill:#326ce5,color:#fff
+```
+
+**Key settings:**
+- `kubernetes_version`: 1.34
+- `network_plugin`: kubenet
+- `load_balancer_sku`: standard
+- `service_cidr`: 172.16.0.0/16
+- State stored in Azure Blob Storage (separate resource group)
+
+---
+
 ## CI/CD Pipeline Flow
 
 ```
