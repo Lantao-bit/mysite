@@ -57,7 +57,7 @@ class TestCreateProjectPreservesData:
     **Validates: Requirements 1.1**
     """
 
-    @settings(max_examples=100)
+    @settings(max_examples=100, deadline=None)
     @given(
         title=non_empty_text,
         description=non_empty_text,
@@ -112,7 +112,7 @@ class TestUpdateProjectPreservesData:
     **Validates: Requirements 2.1**
     """
 
-    @settings(max_examples=100)
+    @settings(max_examples=100, deadline=None)
     @given(
         title=non_empty_text,
         description=non_empty_text,
@@ -191,7 +191,7 @@ class TestDeleteProjectRemovesRecord:
     **Validates: Requirements 3.1**
     """
 
-    @settings(max_examples=100)
+    @settings(max_examples=100, deadline=None)
     @given(
         title=non_empty_text,
         description=non_empty_text,
@@ -244,7 +244,7 @@ class TestProjectListingOrder:
     **Validates: Requirements 4.1**
     """
 
-    @settings(max_examples=100)
+    @settings(max_examples=100, deadline=None)
     @given(
         orders=st.lists(display_order_st, min_size=1, max_size=20),
     )

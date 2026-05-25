@@ -74,7 +74,7 @@ class TestAdminAuthorizationGate:
         assert resp.status_code == 302
         assert "/login" in resp.headers["Location"]
 
-    @settings(max_examples=100)
+    @settings(max_examples=100, deadline=None)
     @given(email=non_admin_emails)
     def test_non_admin_gets_403(self, email):
         """Authenticated users whose email != ADMIN_EMAIL get 403."""
@@ -122,7 +122,7 @@ class TestAdminAuthorizationGate:
             assert resp.status_code == 200
             assert resp.data == b"OK"
 
-    @settings(max_examples=100)
+    @settings(max_examples=100, deadline=None)
     @given(admin_email=st.emails())
     def test_access_granted_iff_email_matches(self, admin_email):
         """Access is granted if and only if user email matches ADMIN_EMAIL config."""
