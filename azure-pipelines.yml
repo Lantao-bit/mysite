@@ -21,16 +21,21 @@ stages:
       - job: RunTests
         displayName: 'Install dependencies and run pytest'
         pool:
-          name: 'Default'
+          vmImage: 'ubuntu-latest'
         steps:
+          - task: UsePythonVersion@0
+            displayName: 'Use Python 3.12'
+            inputs:
+              versionSpec: '3.12'
+
           - task: Bash@3
             displayName: 'Install dependencies'
             inputs:
               targetType: inline
               script: |
                 set -ex
-                python3 -m pip install --upgrade pip
-                python3 -m pip install -r portfolio/requirements.txt
+                python -m pip install --upgrade pip
+                python -m pip install -r portfolio/requirements.txt
 
           - task: Bash@3
             displayName: 'Run test suite with coverage'
@@ -38,10 +43,16 @@ stages:
               targetType: inline
               script: |
                 set -ex
-                python3 -m pytest tests/ -v --tb=short \
+                python -m pytest tests/ -v --tb=short \
                   --cov=portfolio \
                   --cov-report=term-missing \
+                  --cov-report=xml:coverage.xml \
                   --cov-fail-under=80
+
+          - task: PublishCodeCoverageResults@2
+            displayName: 'Publish code coverage'
+            inputs:
+              summaryFileLocation: '$(System.DefaultWorkingDirectory)/coverage.xml'
 
   # ── Stage 1: Terraform Plan ────────────────────────────────────────────
   - stage: TerraformPlan
