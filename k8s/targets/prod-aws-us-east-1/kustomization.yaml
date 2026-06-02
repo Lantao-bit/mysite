@@ -1,0 +1,36 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../providers/aws
+patches:
+  - path: ingress-host-patch.yaml
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: portfolio
+        namespace: portfolio
+      spec:
+        replicas: 2
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: portfolio
+        namespace: portfolio
+      spec:
+        template:
+          spec:
+            containers:
+              - name: portfolio
+                resources:
+                  requests:
+                    memory: "64Mi"
+                    cpu: "100m"
+                  limits:
+                    memory: "256Mi"
+                    cpu: "500m"
+images:
+  - name: ltyang/portfolio
+    newName: 123456789.dkr.ecr.us-east-1.amazonaws.com/portfolio
+    newTag: BUILD_ID

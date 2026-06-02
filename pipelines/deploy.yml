@@ -1,0 +1,118 @@
+# pipelines/deploy.yml
+# Azure DevOps pipeline for Azure deployment targets only.
+# AWS targets are handled by GitHub Actions (.github/workflows/).
+#
+# Triggers: push to main, release/*, or v* tags.
+
+trigger:
+  branches:
+    include:
+      - main
+      - release/*
+  tags:
+    include:
+      - v*
+
+parameters:
+  - name: image_tag
+    displayName: 'Image tag to deploy (empty = build new image)'
+    type: string
+    default: ''
+
+variables:
+  imageName: 'ltyang/portfolio'
+  imageTag: '$(Build.BuildId)'
+
+stages:
+  # ════════════════════════════════════════════════════════════════════════════════
+  # Stage: Test
+  # ════════════════════════════════════════════════════════════════════════════════
+  - stage: Test
+    displayName: 'Run Tests'
+    jobs:
+      - job: RunTests
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '3.12'
+
+          - bash: |
+              set -ex
+              python -m pip install --upgrade pip
+              python -m pip install -r portfolio/requirements.txt
+            displayName: 'Install dependencies'
+
+          - bash: |
+              set -ex
+              python -m pytest tests/ -v --tb=short \
+                --cov=portfolio \
+                --cov-report=term-missing \
+                --cov-report=xml:coverage.xml \
+                --cov-fail-under=80
+            displayName: 'Run test suite'
+
+  # ════════════════════════════════════════════════════════════════════════════════
+  # Stage: Build & Push to Docker Hub
+  # ════════════════════════════════════════════════════════════════════════════════
+  - stage: Build
+    displayName: 'Build & Push Image'
+    dependsOn: Test
+    condition: and(succeeded(), eq('${{ parameters.image_tag }}', ''))
+    jobs:
+      - job: BuildAndPush
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Docker@2
+            displayName: 'Login to Docker Hub'
+            inputs:
+              command: login
+              containerRegistry: 'dockerhub-connection'
+
+          - bash: |
+              set -euo pipefail
+              docker build \
+                --platform linux/amd64 \
+                -t $(imageName):$(imageTag) \
+                -t $(imageName):latest \
+                -f $(Build.SourcesDirectory)/Dockerfile \
+                $(Build.SourcesDirectory)
+              docker push $(imageName):$(imageTag)
+              docker push $(imageName):latest
+              echo "Pushed: $(imageName):$(imageTag)"
+            displayName: 'Build and push to Docker Hub'
+
+  # ════════════════════════════════════════════════════════════════════════════════
+  # Stage: Deploy to Azure (prod-azure-eastus)
+  # ════════════════════════════════════════════════════════════════════════════════
+  - stage: Deploy_Azure
+    displayName: 'Deploy: prod-azure-eastus'
+    dependsOn:
+      - Test
+      - Build
+    condition: |
+      and(
+        in(dependencies.Test.result, 'Succeeded'),
+        in(dependencies.Build.result, 'Succeeded', 'Skipped')
+      )
+    jobs:
+      - job: Deploy
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - template: templates/deploy-target.yml
+            parameters:
+              target:
+                name: prod-azure-eastus
+                provider: azure
+                region: eastus
+                environment: prod
+                registry: dockerhub
+                cluster_name: portfolio-aks
+                resource_group: portfolio-rg
+                dns:
+                  subdomain: ''
+                  record_type: A
+              image_tag: ${{ coalesce(parameters.image_tag, '$(Build.BuildId)') }}

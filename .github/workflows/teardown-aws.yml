@@ -1,0 +1,128 @@
+# .github/workflows/teardown-aws.yml
+# GitHub Actions workflow for tearing down AWS infrastructure.
+# Manual dispatch only — never runs automatically.
+
+name: Teardown AWS
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Target to tear down'
+        required: true
+        type: choice
+        options:
+          - prod-aws-us-east-1
+          - dev-aws-us-east-1
+      preserve_ecr:
+        description: 'Preserve ECR repository (keep container images)'
+        required: true
+        type: boolean
+        default: true
+      confirm:
+        description: 'Type "destroy" to confirm'
+        required: true
+        type: string
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  teardown:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.confirm == 'destroy' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "destroy" ]; then
+            echo "::error::You must type 'destroy' to confirm teardown."
+            exit 1
+          fi
+          echo "Teardown confirmed for target: ${{ github.event.inputs.target }}"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Remove Cloudflare DNS record
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+        run: |
+          TARGET="${{ github.event.inputs.target }}"
+          if [ "$TARGET" = "prod-aws-us-east-1" ]; then
+            RECORD_NAME="aws.orchidflow.io"
+          elif [ "$TARGET" = "dev-aws-us-east-1" ]; then
+            RECORD_NAME="dev-aws.orchidflow.io"
+          fi
+
+          echo "Removing DNS record: $RECORD_NAME"
+
+          RESPONSE=$(curl -s \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${RECORD_NAME}")
+
+          RECORD_ID=$(echo "$RESPONSE" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          results = data.get('result', [])
+          print(results[0]['id'] if results else '')
+          " 2>/dev/null || true)
+
+          if [ -z "$RECORD_ID" ]; then
+            echo "No DNS record found — nothing to remove (idempotent)."
+          else
+            curl -s -X DELETE \
+              "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${RECORD_ID}" \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}"
+            echo "DNS record deleted."
+          fi
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Destroy
+        working-directory: infra/targets/${{ github.event.inputs.target }}
+        run: |
+          terraform init -input=false
+
+          if [ "${{ github.event.inputs.preserve_ecr }}" = "true" ]; then
+            echo "Preserving ECR — excluding ECR resources from destroy..."
+            RESOURCES=$(terraform state list 2>/dev/null || echo "")
+            if [ -z "$RESOURCES" ]; then
+              echo "No resources in state — nothing to destroy."
+              exit 0
+            fi
+
+            TARGET_FLAGS=""
+            while IFS= read -r resource; do
+              if echo "$resource" | grep -qi "ecr"; then
+                echo "Skipping: $resource"
+              else
+                TARGET_FLAGS="$TARGET_FLAGS -target=$resource"
+              fi
+            done <<< "$RESOURCES"
+
+            if [ -z "$TARGET_FLAGS" ]; then
+              echo "Only ECR resources found — nothing to destroy."
+              exit 0
+            fi
+
+            eval terraform destroy -auto-approve -input=false $TARGET_FLAGS
+          else
+            terraform destroy -auto-approve -input=false
+          fi
+
+      - name: Summary
+        run: |
+          echo "✅ Teardown complete: ${{ github.event.inputs.target }}"
+          echo "   Preserve ECR: ${{ github.event.inputs.preserve_ecr }}"
+          echo "   State backend preserved (S3 bucket + DynamoDB table)"
+          echo "   Re-deploy anytime by running the deploy workflow."

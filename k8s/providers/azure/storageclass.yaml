@@ -1,0 +1,8 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: managed-premium
+provisioner: disk.csi.azure.com
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  skuName: Premium_LRS

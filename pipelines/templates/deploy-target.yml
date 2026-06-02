@@ -1,0 +1,429 @@
+# pipelines/templates/deploy-target.yml
+# Per-target deployment template for multi-cloud deployment.
+# Handles the full deployment flow for a single target: credentials, Terraform,
+# cluster access, Helm installs, Kustomize deploy, rollout verification, and DNS.
+#
+# Re-provisioning: If a target was previously torn down, this template executes
+# the full flow (terraform apply re-creates infra, Helm installs fresh,
+# manifests applied, DNS re-created) — no special handling needed.
+
+parameters:
+  - name: target
+    type: object
+  - name: image_tag
+    type: string
+
+steps:
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 1: Credential Setup (provider-specific)
+  # ──────────────────────────────────────────────────────────────────────────────
+  - ${{ if eq(parameters.target.provider, 'azure') }}:
+    - bash: |
+        echo "##vso[task.setvariable variable=ARM_CLIENT_ID;issecret=false]$(ARM_CLIENT_ID)"
+        echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET;issecret=true]$(ARM_CLIENT_SECRET)"
+        echo "##vso[task.setvariable variable=ARM_SUBSCRIPTION_ID;issecret=false]$(ARM_SUBSCRIPTION_ID)"
+        echo "##vso[task.setvariable variable=ARM_TENANT_ID;issecret=false]$(ARM_TENANT_ID)"
+      displayName: 'Setup Azure credentials'
+      env:
+        ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+        ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+        ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+        ARM_TENANT_ID: $(ARM_TENANT_ID)
+
+  - ${{ if eq(parameters.target.provider, 'aws') }}:
+    - bash: |
+        echo "##vso[task.setvariable variable=AWS_ACCESS_KEY_ID;issecret=false]$(AWS_ACCESS_KEY_ID)"
+        echo "##vso[task.setvariable variable=AWS_SECRET_ACCESS_KEY;issecret=true]$(AWS_SECRET_ACCESS_KEY)"
+        echo "##vso[task.setvariable variable=AWS_REGION;issecret=false]$(AWS_REGION)"
+      displayName: 'Setup AWS credentials'
+      env:
+        AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+        AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+        AWS_REGION: $(AWS_REGION)
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 2: Pre-flight credential validation
+  # ──────────────────────────────────────────────────────────────────────────────
+  - ${{ if eq(parameters.target.provider, 'azure') }}:
+    - bash: |
+        set -euo pipefail
+        MISSING=""
+        [ -z "${ARM_CLIENT_ID:-}" ] && MISSING="${MISSING} ARM_CLIENT_ID"
+        [ -z "${ARM_CLIENT_SECRET:-}" ] && MISSING="${MISSING} ARM_CLIENT_SECRET"
+        [ -z "${ARM_SUBSCRIPTION_ID:-}" ] && MISSING="${MISSING} ARM_SUBSCRIPTION_ID"
+        [ -z "${ARM_TENANT_ID:-}" ] && MISSING="${MISSING} ARM_TENANT_ID"
+        if [ -n "$MISSING" ]; then
+          echo "##[error]Missing required Azure credentials:${MISSING}"
+          echo "Ensure the following pipeline variables are set: ARM_CLIENT_ID, ARM_CLIENT_SECRET, ARM_SUBSCRIPTION_ID, ARM_TENANT_ID"
+          exit 1
+        fi
+        echo "Azure credentials validated successfully."
+      displayName: 'Validate Azure credentials'
+      env:
+        ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+        ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+        ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+        ARM_TENANT_ID: $(ARM_TENANT_ID)
+
+  - ${{ if eq(parameters.target.provider, 'aws') }}:
+    - bash: |
+        set -euo pipefail
+        MISSING=""
+        [ -z "${AWS_ACCESS_KEY_ID:-}" ] && MISSING="${MISSING} AWS_ACCESS_KEY_ID"
+        [ -z "${AWS_SECRET_ACCESS_KEY:-}" ] && MISSING="${MISSING} AWS_SECRET_ACCESS_KEY"
+        [ -z "${AWS_REGION:-}" ] && MISSING="${MISSING} AWS_REGION"
+        if [ -n "$MISSING" ]; then
+          echo "##[error]Missing required AWS credentials:${MISSING}"
+          echo "Ensure the following pipeline variables are set: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION"
+          exit 1
+        fi
+        echo "AWS credentials validated successfully."
+      displayName: 'Validate AWS credentials'
+      env:
+        AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+        AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+        AWS_REGION: $(AWS_REGION)
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 3: Terraform init + plan + apply
+  # Re-provisioning: When a target was previously torn down, the state backend
+  # still exists (preserved during teardown) but resources are gone. Terraform
+  # detects the drift and re-creates all infrastructure from scratch.
+  # ──────────────────────────────────────────────────────────────────────────────
+  - bash: |
+      set -euo pipefail
+      cd infra/targets/${{ parameters.target.name }}
+
+      echo "=== Terraform Init ==="
+      terraform init -input=false
+
+      echo "=== Terraform Plan ==="
+      terraform plan -input=false -out=tfplan
+
+      echo "=== Terraform Apply ==="
+      terraform apply -input=false -auto-approve tfplan
+    displayName: 'Terraform init + plan + apply (${{ parameters.target.name }})'
+    env:
+      ${{ if eq(parameters.target.provider, 'azure') }}:
+        ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+        ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+        ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+        ARM_TENANT_ID: $(ARM_TENANT_ID)
+      ${{ if eq(parameters.target.provider, 'aws') }}:
+        AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+        AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+        AWS_DEFAULT_REGION: ${{ parameters.target.region }}
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 4: Cluster access (provider-specific kubeconfig)
+  # ──────────────────────────────────────────────────────────────────────────────
+  - ${{ if eq(parameters.target.provider, 'aws') }}:
+    - bash: |
+        set -euo pipefail
+        echo "Configuring kubectl for EKS cluster: ${{ parameters.target.cluster_name }}"
+        aws eks update-kubeconfig \
+          --name ${{ parameters.target.cluster_name }} \
+          --region ${{ parameters.target.region }}
+        echo "kubectl context configured successfully."
+        kubectl cluster-info
+      displayName: 'Get EKS credentials (${{ parameters.target.cluster_name }})'
+      env:
+        AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+        AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+        AWS_DEFAULT_REGION: ${{ parameters.target.region }}
+
+  - ${{ if eq(parameters.target.provider, 'azure') }}:
+    - bash: |
+        set -euo pipefail
+        echo "Configuring kubectl for AKS cluster: ${{ parameters.target.cluster_name }}"
+        az login --service-principal \
+          -u "$ARM_CLIENT_ID" \
+          -p "$ARM_CLIENT_SECRET" \
+          --tenant "$ARM_TENANT_ID"
+        az aks get-credentials \
+          --resource-group ${{ parameters.target.resource_group }} \
+          --name ${{ parameters.target.cluster_name }} \
+          --overwrite-existing
+        echo "kubectl context configured successfully."
+        kubectl cluster-info
+      displayName: 'Get AKS credentials (${{ parameters.target.cluster_name }})'
+      env:
+        ARM_CLIENT_ID: $(ARM_CLIENT_ID)
+        ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
+        ARM_TENANT_ID: $(ARM_TENANT_ID)
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 5: Helm upgrade --install ingress-nginx (idempotent)
+  # Re-provisioning: `helm upgrade --install` installs fresh when the release
+  # does not exist (torn-down cluster), or upgrades if already present.
+  # ──────────────────────────────────────────────────────────────────────────────
+  - bash: |
+      set -euo pipefail
+      echo "Adding ingress-nginx Helm repo..."
+      helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+      helm repo update
+
+      echo "Installing/upgrading ingress-nginx..."
+      helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+        --namespace ingress-nginx \
+        --create-namespace \
+        --wait
+      echo "ingress-nginx installed successfully."
+    displayName: 'Helm install ingress-nginx'
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 6: Wait for external IP/hostname (300s timeout)
+  # ──────────────────────────────────────────────────────────────────────────────
+  - bash: |
+      set -euo pipefail
+      echo "Waiting for ingress-nginx-controller external IP/hostname (timeout: 300s)..."
+      TIMEOUT=300
+      INTERVAL=10
+      ELAPSED=0
+
+      while [ $ELAPSED -lt $TIMEOUT ]; do
+        EXTERNAL=$(kubectl get svc ingress-nginx-controller \
+          -n ingress-nginx \
+          -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+
+        if [ -n "$EXTERNAL" ]; then
+          echo "External address obtained: $EXTERNAL"
+          echo "##vso[task.setvariable variable=INGRESS_EXTERNAL_ADDRESS]$EXTERNAL"
+          exit 0
+        fi
+
+        echo "  Waiting... (${ELAPSED}s / ${TIMEOUT}s)"
+        sleep $INTERVAL
+        ELAPSED=$((ELAPSED + INTERVAL))
+      done
+
+      echo "##[error]Timed out waiting for external IP/hostname after ${TIMEOUT}s"
+      echo "Load balancer may have provisioned but no external address was obtained."
+      exit 1
+    displayName: 'Wait for Load Balancer external address'
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 7: Helm upgrade --install cert-manager + wait for webhook (120s timeout)
+  # Re-provisioning: Same as Step 5 — installs fresh on a new cluster.
+  # ──────────────────────────────────────────────────────────────────────────────
+  - bash: |
+      set -euo pipefail
+      echo "Adding jetstack Helm repo..."
+      helm repo add jetstack https://charts.jetstack.io
+      helm repo update
+
+      echo "Installing/upgrading cert-manager..."
+      helm upgrade --install cert-manager jetstack/cert-manager \
+        --namespace cert-manager \
+        --create-namespace \
+        --set installCRDs=true \
+        --wait \
+        --timeout 120s
+
+      echo "Waiting for cert-manager webhook to be ready..."
+      kubectl wait --for=condition=Available \
+        deployment/cert-manager-webhook \
+        -n cert-manager \
+        --timeout=120s
+
+      echo "cert-manager installed and webhook ready."
+    displayName: 'Helm install cert-manager'
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 8: Create/update image pull secret (idempotent: dry-run + apply)
+  # ──────────────────────────────────────────────────────────────────────────────
+  - ${{ if eq(parameters.target.registry, 'ecr') }}:
+    - bash: |
+        set -euo pipefail
+        echo "Creating/updating ECR image pull secret..."
+
+        # Get ECR login password
+        ECR_PASSWORD=$(aws ecr get-login-password --region ${{ parameters.target.region }})
+        ECR_SERVER="${AWS_ACCOUNT_ID}.dkr.ecr.${{ parameters.target.region }}.amazonaws.com"
+
+        # Ensure namespace exists
+        kubectl create namespace portfolio --dry-run=client -o yaml | kubectl apply -f -
+
+        # Create/update pull secret (idempotent)
+        kubectl create secret docker-registry ecr-pull-secret \
+          --namespace portfolio \
+          --docker-server="$ECR_SERVER" \
+          --docker-username=AWS \
+          --docker-password="$ECR_PASSWORD" \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        echo "ECR image pull secret created/updated successfully."
+      displayName: 'Create ECR image pull secret'
+      env:
+        AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+        AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+        AWS_DEFAULT_REGION: ${{ parameters.target.region }}
+        AWS_ACCOUNT_ID: $(AWS_ACCOUNT_ID)
+
+  - ${{ if eq(parameters.target.registry, 'dockerhub') }}:
+    - bash: |
+        set -euo pipefail
+        echo "Creating/updating Docker Hub image pull secret..."
+
+        # Ensure namespace exists
+        kubectl create namespace portfolio --dry-run=client -o yaml | kubectl apply -f -
+
+        # Create/update pull secret (idempotent)
+        kubectl create secret docker-registry dockerhub-pull-secret \
+          --namespace portfolio \
+          --docker-server=https://index.docker.io/v1/ \
+          --docker-username="$DOCKERHUB_USERNAME" \
+          --docker-password="$DOCKERHUB_TOKEN" \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        echo "Docker Hub image pull secret created/updated successfully."
+      displayName: 'Create Docker Hub image pull secret'
+      env:
+        DOCKERHUB_USERNAME: $(DOCKERHUB_USERNAME)
+        DOCKERHUB_TOKEN: $(DOCKERHUB_TOKEN)
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 9: Kustomize edit set image + kustomize build + kubectl apply
+  # Re-provisioning: kubectl apply creates all resources fresh on an empty cluster.
+  # ──────────────────────────────────────────────────────────────────────────────
+  - bash: |
+      set -euo pipefail
+      TARGET_DIR="k8s/targets/${{ parameters.target.name }}"
+      IMAGE_TAG="${{ parameters.image_tag }}"
+
+      echo "Deploying to target: ${{ parameters.target.name }}"
+      echo "Image tag: ${IMAGE_TAG}"
+
+      cd "$TARGET_DIR"
+
+      # Set the image tag via kustomize
+      kustomize edit set image "ltyang/portfolio=ltyang/portfolio:${IMAGE_TAG}"
+
+      echo "=== Kustomize build + kubectl apply ==="
+      kustomize build . | kubectl apply -f -
+
+      echo "Manifests applied successfully."
+    displayName: 'Kustomize deploy (${{ parameters.target.name }})'
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 10: Rollout status verification (180s timeout)
+  # ──────────────────────────────────────────────────────────────────────────────
+  - bash: |
+      set -euo pipefail
+      echo "Verifying rollout status for deployment/portfolio (timeout: 180s)..."
+      kubectl rollout status deployment/portfolio \
+        -n portfolio \
+        --timeout=180s
+      echo "Rollout completed successfully."
+    displayName: 'Verify rollout status'
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 11: DNS update (Cloudflare A/CNAME record for target subdomain)
+  # Re-provisioning: Creates a new DNS record if it was removed during teardown,
+  # or updates the existing record if the ingress address changed.
+  # ──────────────────────────────────────────────────────────────────────────────
+  - bash: |
+      set -euo pipefail
+
+      ZONE_ID="$CLOUDFLARE_ZONE_ID"
+      API_TOKEN="$CLOUDFLARE_API_TOKEN"
+      DOMAIN="orchidflow.io"
+      SUBDOMAIN="${{ parameters.target.dns.subdomain }}"
+      INGRESS_VALUE="$(INGRESS_EXTERNAL_ADDRESS)"
+
+      # Determine the full record name
+      if [ -z "$SUBDOMAIN" ]; then
+        RECORD_NAME="$DOMAIN"
+      else
+        RECORD_NAME="${SUBDOMAIN}.${DOMAIN}"
+      fi
+
+      # Determine record type based on the ingress value (IP = A, hostname = CNAME)
+      if echo "$INGRESS_VALUE" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+        RECORD_TYPE="A"
+      else
+        RECORD_TYPE="CNAME"
+      fi
+
+      echo "Updating DNS: ${RECORD_NAME} -> ${INGRESS_VALUE} (${RECORD_TYPE})"
+
+      # Check if record already exists
+      EXISTING=$(curl -s -X GET \
+        "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?type=${RECORD_TYPE}&name=${RECORD_NAME}" \
+        -H "Authorization: Bearer ${API_TOKEN}" \
+        -H "Content-Type: application/json")
+
+      RECORD_ID=$(echo "$EXISTING" | python3 -c "
+      import sys, json
+      data = json.load(sys.stdin)
+      results = data.get('result', [])
+      if results:
+          print(results[0]['id'])
+      " 2>/dev/null || true)
+
+      PAYLOAD=$(python3 -c "
+      import json
+      print(json.dumps({
+          'type': '${RECORD_TYPE}',
+          'name': '${RECORD_NAME}',
+          'content': '${INGRESS_VALUE}',
+          'ttl': 300,
+          'proxied': False
+      }))
+      ")
+
+      if [ -n "$RECORD_ID" ]; then
+        # Update existing record
+        echo "Updating existing DNS record (ID: ${RECORD_ID})..."
+        RESPONSE=$(curl -s -X PUT \
+          "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records/${RECORD_ID}" \
+          -H "Authorization: Bearer ${API_TOKEN}" \
+          -H "Content-Type: application/json" \
+          --data "$PAYLOAD")
+      else
+        # Create new record
+        echo "Creating new DNS record..."
+        RESPONSE=$(curl -s -X POST \
+          "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records" \
+          -H "Authorization: Bearer ${API_TOKEN}" \
+          -H "Content-Type: application/json" \
+          --data "$PAYLOAD")
+      fi
+
+      # Verify success
+      SUCCESS=$(echo "$RESPONSE" | python3 -c "
+      import sys, json
+      data = json.load(sys.stdin)
+      print(str(data.get('success', False)).lower())
+      ")
+
+      if [ "$SUCCESS" != "true" ]; then
+        echo "##[error]Failed to update DNS record for ${RECORD_NAME}"
+        echo "$RESPONSE" | python3 -c "
+      import sys, json
+      data = json.load(sys.stdin)
+      for err in data.get('errors', []):
+          print(f\"  Error: {err.get('message', 'unknown')}\")
+      "
+        exit 1
+      fi
+
+      echo "DNS record updated successfully: ${RECORD_NAME} -> ${INGRESS_VALUE}"
+    displayName: 'Update Cloudflare DNS (${{ parameters.target.name }})'
+    env:
+      CLOUDFLARE_API_TOKEN: $(CLOUDFLARE_API_TOKEN)
+      CLOUDFLARE_ZONE_ID: $(CLOUDFLARE_ZONE_ID)
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 12: Log deployed image tag
+  # ──────────────────────────────────────────────────────────────────────────────
+  - bash: |
+      echo "============================================"
+      echo "  Deployment Complete"
+      echo "  Target:    ${{ parameters.target.name }}"
+      echo "  Provider:  ${{ parameters.target.provider }}"
+      echo "  Region:    ${{ parameters.target.region }}"
+      echo "  Cluster:   ${{ parameters.target.cluster_name }}"
+      echo "  Image Tag: ${{ parameters.image_tag }}"
+      echo "============================================"
+    displayName: 'Log deployed image tag (${{ parameters.target.name }})'

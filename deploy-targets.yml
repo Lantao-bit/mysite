@@ -1,0 +1,54 @@
+# deploy-targets.yml
+# Central registry of all deployment targets.
+#
+# CI/CD Platform Split:
+#   - Azure targets: Azure DevOps (pipelines/deploy.yml)
+#   - AWS targets:   GitHub Actions (.github/workflows/deploy-aws.yml)
+
+targets:
+  - name: prod-azure-eastus
+    enabled: true
+    provider: azure
+    region: eastus
+    environment: prod
+    cicd: azure-devops       # pipelines/deploy.yml
+    trigger:
+      branches: [release/*]
+      tags: [v*]
+    dns:
+      subdomain: ""          # root domain (orchidflow.io)
+      record_type: A
+    registry: dockerhub
+    cluster_name: portfolio-aks
+    resource_group: portfolio-rg
+
+  - name: prod-aws-us-east-1
+    enabled: true
+    provider: aws
+    region: us-east-1
+    environment: prod
+    cicd: github-actions     # .github/workflows/deploy-aws.yml
+    trigger:
+      branches: [release/*]
+      tags: [v*]
+    dns:
+      subdomain: aws         # aws.orchidflow.io
+      record_type: A
+    registry: ecr
+    cluster_name: portfolio-eks
+    ecr_repo: portfolio
+
+  - name: dev-aws-us-east-1
+    enabled: false
+    provider: aws
+    region: us-east-1
+    environment: dev
+    cicd: github-actions     # .github/workflows/deploy-aws.yml (manual only)
+    trigger:
+      branches: [main]
+    dns:
+      subdomain: dev-aws     # dev-aws.orchidflow.io
+      record_type: A
+    registry: ecr
+    cluster_name: portfolio-eks-dev
+    ecr_repo: portfolio

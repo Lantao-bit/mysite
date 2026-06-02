@@ -1,0 +1,409 @@
+# .github/workflows/deploy-aws.yml
+# GitHub Actions workflow for AWS deployment targets.
+# Handles: test → build → push to ECR → deploy to EKS → update DNS.
+#
+# Triggers: push to main, release/*, or v* tags.
+# Manual dispatch allows targeting specific environments or image tags.
+
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [main, 'release/*']
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Target to deploy (prod-aws-us-east-1 or dev-aws-us-east-1)'
+        required: true
+        default: 'prod-aws-us-east-1'
+        type: choice
+        options:
+          - prod-aws-us-east-1
+          - dev-aws-us-east-1
+      image_tag:
+        description: 'Image tag to deploy (empty = build new)'
+        required: false
+        default: ''
+        type: string
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: portfolio
+  IMAGE_NAME: ltyang/portfolio
+  CLUSTER_NAME_PROD: portfolio-eks
+  CLUSTER_NAME_DEV: portfolio-eks-dev
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Job: Test
+  # ──────────────────────────────────────────────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r portfolio/requirements.txt
+
+      - name: Run tests
+        run: |
+          python -m pytest tests/ -v --tb=short \
+            --cov=portfolio \
+            --cov-report=term-missing \
+            --cov-fail-under=80
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Job: Build & Push
+  # ──────────────────────────────────────────────────────────────────────────────
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.image_tag == '' || github.event.inputs.image_tag == null }}
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set image tag
+        id: meta
+        run: echo "tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        run: |
+          TAG=${{ steps.meta.outputs.tag }}
+          ECR_REGISTRY=${{ steps.ecr-login.outputs.registry }}
+
+          # Build
+          docker build --platform linux/amd64 \
+            -t ${{ env.IMAGE_NAME }}:${TAG} \
+            -t ${{ env.IMAGE_NAME }}:latest \
+            -t ${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:${TAG} \
+            -t ${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:latest \
+            .
+
+          # Push to Docker Hub
+          docker push ${{ env.IMAGE_NAME }}:${TAG}
+          docker push ${{ env.IMAGE_NAME }}:latest
+
+          # Push to ECR
+          docker push ${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:${TAG}
+          docker push ${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:latest
+
+          echo "Pushed: ${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:${TAG}"
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Job: Deploy to prod-aws-us-east-1
+  # ──────────────────────────────────────────────────────────────────────────────
+  deploy-prod:
+    needs: [test, build]
+    if: |
+      always() &&
+      needs.test.result == 'success' &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped') &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.target == 'prod-aws-us-east-1')
+    runs-on: ubuntu-latest
+    environment: prod-aws
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine image tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            echo "tag=${{ github.event.inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ needs.build.outputs.image_tag }}" ]; then
+            echo "tag=${{ needs.build.outputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Apply
+        working-directory: infra/targets/prod-aws-us-east-1
+        run: |
+          terraform init -input=false
+          terraform apply -input=false -auto-approve
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ env.CLUSTER_NAME_PROD }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Install ingress-nginx
+        run: |
+          helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+          helm repo update
+          helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+            --namespace ingress-nginx --create-namespace --wait
+
+      - name: Wait for Load Balancer
+        run: |
+          echo "Waiting for external address (timeout: 300s)..."
+          for i in $(seq 1 30); do
+            EXTERNAL=$(kubectl get svc ingress-nginx-controller -n ingress-nginx \
+              -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+            if [ -n "$EXTERNAL" ]; then
+              echo "External address: $EXTERNAL"
+              echo "INGRESS_ADDRESS=$EXTERNAL" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            echo "  Waiting... (${i}0s / 300s)"
+            sleep 10
+          done
+          echo "::error::Timed out waiting for external address"
+          exit 1
+
+      - name: Install cert-manager
+        run: |
+          helm repo add jetstack https://charts.jetstack.io
+          helm repo update
+          helm upgrade --install cert-manager jetstack/cert-manager \
+            --namespace cert-manager --create-namespace \
+            --set installCRDs=true --wait --timeout 120s
+          kubectl wait --for=condition=Available \
+            deployment/cert-manager-webhook -n cert-manager --timeout=120s
+
+      - name: Create ECR pull secret
+        run: |
+          ECR_PASSWORD=$(aws ecr get-login-password --region ${{ env.AWS_REGION }})
+          ECR_SERVER="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
+          kubectl create namespace portfolio --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret docker-registry ecr-pull-secret \
+            --namespace portfolio \
+            --docker-server="$ECR_SERVER" \
+            --docker-username=AWS \
+            --docker-password="$ECR_PASSWORD" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy with Kustomize
+        run: |
+          TAG=${{ steps.tag.outputs.tag }}
+          cd k8s/targets/prod-aws-us-east-1
+          kustomize edit set image "ltyang/portfolio=ltyang/portfolio:${TAG}"
+          kustomize build . | kubectl apply -f -
+
+      - name: Verify rollout
+        run: |
+          kubectl rollout status deployment/portfolio -n portfolio --timeout=180s
+
+      - name: Update Cloudflare DNS
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+        run: |
+          RECORD_NAME="aws.orchidflow.io"
+          INGRESS_VALUE="${INGRESS_ADDRESS}"
+
+          # Determine record type
+          if echo "$INGRESS_VALUE" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+            RECORD_TYPE="A"
+          else
+            RECORD_TYPE="CNAME"
+          fi
+
+          # Check existing record
+          EXISTING=$(curl -s \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${RECORD_NAME}")
+          RECORD_ID=$(echo "$EXISTING" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          results = data.get('result', [])
+          print(results[0]['id'] if results else '')
+          " 2>/dev/null || true)
+
+          PAYLOAD="{\"type\":\"${RECORD_TYPE}\",\"name\":\"${RECORD_NAME}\",\"content\":\"${INGRESS_VALUE}\",\"ttl\":300,\"proxied\":false}"
+
+          if [ -n "$RECORD_ID" ]; then
+            curl -s -X PUT \
+              "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${RECORD_ID}" \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "$PAYLOAD"
+          else
+            curl -s -X POST \
+              "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records" \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "$PAYLOAD"
+          fi
+
+          echo "DNS updated: ${RECORD_NAME} -> ${INGRESS_VALUE}"
+
+      - name: Summary
+        run: |
+          echo "✅ Deployed to prod-aws-us-east-1"
+          echo "   Image: ${{ steps.tag.outputs.tag }}"
+          echo "   Cluster: ${{ env.CLUSTER_NAME_PROD }}"
+          echo "   DNS: aws.orchidflow.io"
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Job: Deploy to dev-aws-us-east-1 (manual dispatch only)
+  # ──────────────────────────────────────────────────────────────────────────────
+  deploy-dev:
+    needs: [test, build]
+    if: |
+      always() &&
+      needs.test.result == 'success' &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped') &&
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.target == 'dev-aws-us-east-1'
+    runs-on: ubuntu-latest
+    environment: dev-aws
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine image tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            echo "tag=${{ github.event.inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ needs.build.outputs.image_tag }}" ]; then
+            echo "tag=${{ needs.build.outputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Apply
+        working-directory: infra/targets/dev-aws-us-east-1
+        run: |
+          terraform init -input=false
+          terraform apply -input=false -auto-approve
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ env.CLUSTER_NAME_DEV }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Install ingress-nginx
+        run: |
+          helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+          helm repo update
+          helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+            --namespace ingress-nginx --create-namespace --wait
+
+      - name: Wait for Load Balancer
+        run: |
+          for i in $(seq 1 30); do
+            EXTERNAL=$(kubectl get svc ingress-nginx-controller -n ingress-nginx \
+              -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+            if [ -n "$EXTERNAL" ]; then
+              echo "INGRESS_ADDRESS=$EXTERNAL" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Timed out waiting for external address"
+          exit 1
+
+      - name: Install cert-manager
+        run: |
+          helm repo add jetstack https://charts.jetstack.io
+          helm repo update
+          helm upgrade --install cert-manager jetstack/cert-manager \
+            --namespace cert-manager --create-namespace \
+            --set installCRDs=true --wait --timeout 120s
+
+      - name: Create ECR pull secret
+        run: |
+          ECR_PASSWORD=$(aws ecr get-login-password --region ${{ env.AWS_REGION }})
+          ECR_SERVER="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
+          kubectl create namespace portfolio --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret docker-registry ecr-pull-secret \
+            --namespace portfolio \
+            --docker-server="$ECR_SERVER" \
+            --docker-username=AWS \
+            --docker-password="$ECR_PASSWORD" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy with Kustomize
+        run: |
+          TAG=${{ steps.tag.outputs.tag }}
+          cd k8s/targets/dev-aws-us-east-1
+          kustomize edit set image "ltyang/portfolio=ltyang/portfolio:${TAG}"
+          kustomize build . | kubectl apply -f -
+
+      - name: Verify rollout
+        run: |
+          kubectl rollout status deployment/portfolio -n portfolio --timeout=180s
+
+      - name: Update Cloudflare DNS
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+        run: |
+          RECORD_NAME="dev-aws.orchidflow.io"
+          INGRESS_VALUE="${INGRESS_ADDRESS}"
+          if echo "$INGRESS_VALUE" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+            RECORD_TYPE="A"
+          else
+            RECORD_TYPE="CNAME"
+          fi
+          PAYLOAD="{\"type\":\"${RECORD_TYPE}\",\"name\":\"${RECORD_NAME}\",\"content\":\"${INGRESS_VALUE}\",\"ttl\":300,\"proxied\":false}"
+          EXISTING=$(curl -s -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${RECORD_NAME}")
+          RECORD_ID=$(echo "$EXISTING" | python3 -c "import sys,json;d=json.load(sys.stdin);r=d.get('result',[]);print(r[0]['id'] if r else '')" 2>/dev/null || true)
+          if [ -n "$RECORD_ID" ]; then
+            curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${RECORD_ID}" \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" --data "$PAYLOAD"
+          else
+            curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records" \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" --data "$PAYLOAD"
+          fi
+          echo "DNS updated: ${RECORD_NAME} -> ${INGRESS_VALUE}"
+
+      - name: Summary
+        run: |
+          echo "✅ Deployed to dev-aws-us-east-1"
+          echo "   Image: ${{ steps.tag.outputs.tag }}"
+          echo "   Cluster: ${{ env.CLUSTER_NAME_DEV }}"
+          echo "   DNS: dev-aws.orchidflow.io"

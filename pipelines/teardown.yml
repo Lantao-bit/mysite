@@ -1,0 +1,31 @@
+# pipelines/teardown.yml
+# Azure DevOps teardown pipeline for Azure targets only.
+# AWS teardown is handled by GitHub Actions (.github/workflows/teardown-aws.yml).
+# Triggered manually only.
+
+trigger: none
+pr: none
+
+parameters:
+  - name: confirm
+    displayName: 'Type "destroy" to confirm teardown'
+    type: string
+
+stages:
+  - stage: Teardown_Azure
+    displayName: 'Teardown prod-azure-eastus'
+    condition: eq('${{ parameters.confirm }}', 'destroy')
+    jobs:
+      - template: templates/teardown-target.yml
+        parameters:
+          target:
+            name: prod-azure-eastus
+            provider: azure
+            region: eastus
+            environment: prod
+            dns:
+              subdomain: ""
+              record_type: A
+            cluster_name: portfolio-aks
+            resource_group: portfolio-rg
+          preserve_ecr: true
