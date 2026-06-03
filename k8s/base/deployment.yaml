@@ -23,7 +23,7 @@ spec:
     spec:
       terminationGracePeriodSeconds: 60
       imagePullSecrets:
-        - name: dockerhub-creds
+        - name: dockerhub-pull-secret
       containers:
         - name: portfolio
           image: ltyang/portfolio:latest
