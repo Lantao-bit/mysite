@@ -70,7 +70,7 @@ variable "kubernetes_version" {
 
 variable "network_plugin" {
   type        = string
-  default     = "kubenet"
+  default     = "azure"
   description = "AKS network plugin (kubenet or azure)"
 }
 
