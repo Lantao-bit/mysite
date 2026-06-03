@@ -85,7 +85,19 @@ steps:
         AWS_REGION: $(AWS_REGION)
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # Step 3: Terraform init + plan + apply
+  # Step 3: Install Terraform
+  # ──────────────────────────────────────────────────────────────────────────────
+  - bash: |
+      set -euo pipefail
+      echo "Installing Terraform..."
+      curl -fsSL https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip -o /tmp/terraform.zip
+      unzip -o /tmp/terraform.zip -d /usr/local/bin
+      rm /tmp/terraform.zip
+      terraform --version
+    displayName: 'Install Terraform'
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Step 4: Terraform init + plan + apply
   # Re-provisioning: When a target was previously torn down, the state backend
   # still exists (preserved during teardown) but resources are gone. Terraform
   # detects the drift and re-creates all infrastructure from scratch.

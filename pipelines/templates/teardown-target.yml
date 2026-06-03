@@ -70,9 +70,15 @@ jobs:
           echo "Removing Cloudflare DNS record for target '${{ parameters.target.name }}'..."
 
           SUBDOMAIN="${{ parameters.target.dns.subdomain }}"
-          ZONE_ID="${CLOUDFLARE_ZONE_ID}"
-          API_TOKEN="${CLOUDFLARE_API_TOKEN}"
+          ZONE_ID="$CLOUDFLARE_ZONE_ID"
+          API_TOKEN="$CLOUDFLARE_API_TOKEN"
           DOMAIN="orchidflow.io"
+
+          # Validate Cloudflare credentials
+          if [ -z "$ZONE_ID" ] || [ -z "$API_TOKEN" ]; then
+            echo "##[warning]Cloudflare credentials not set. Skipping DNS cleanup."
+            exit 0
+          fi
 
           # Determine the full record name
           if [ -z "$SUBDOMAIN" ]; then
@@ -138,7 +144,19 @@ jobs:
           CLOUDFLARE_API_TOKEN: $(CLOUDFLARE_API_TOKEN)
           CLOUDFLARE_ZONE_ID: $(CLOUDFLARE_ZONE_ID)
 
-      # Step 4: Terraform destroy
+      # Step 4: Install Terraform
+      - script: |
+          set -euo pipefail
+          echo "Installing Terraform..."
+          wget -qO- https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip | busybox unzip -d /usr/local/bin - 2>/dev/null || {
+            curl -fsSL https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip -o /tmp/terraform.zip
+            unzip -o /tmp/terraform.zip -d /usr/local/bin
+            rm /tmp/terraform.zip
+          }
+          terraform --version
+        displayName: 'Install Terraform'
+
+      # Step 5: Terraform destroy
       - script: |
           set -euo pipefail
           TARGET_NAME="${{ parameters.target.name }}"
@@ -218,7 +236,7 @@ jobs:
           ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
           ARM_TENANT_ID: $(ARM_TENANT_ID)
 
-      # Step 5: Report teardown status
+      # Step 6: Report teardown status
       - script: |
           echo "Teardown complete for target '${{ parameters.target.name }}'."
           echo "  Provider: ${{ parameters.target.provider }}"
