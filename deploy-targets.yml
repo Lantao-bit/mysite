@@ -23,7 +23,7 @@ targets:
     resource_group: portfolio-rg
 
   - name: prod-aws-us-east-1
-    enabled: true
+    enabled: false
     provider: aws
     region: us-east-1
     environment: prod
