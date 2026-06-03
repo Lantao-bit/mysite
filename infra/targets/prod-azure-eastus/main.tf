@@ -12,6 +12,7 @@ module "azure" {
 output "cluster_endpoint" {
   description = "AKS cluster API server endpoint URL"
   value       = module.azure.cluster_endpoint
+  sensitive   = true
 }
 
 output "cluster_ca_data" {
