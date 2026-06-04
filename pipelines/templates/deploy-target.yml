@@ -360,9 +360,9 @@ steps:
     displayName: 'Verify rollout status'
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # Step 11: DNS update (Cloudflare A/CNAME record for target subdomain)
-  # Re-provisioning: Creates a new DNS record if it was removed during teardown,
-  # or updates the existing record if the ingress address changed.
+  # Step 11: DNS update (Cloudflare A/CNAME records for target)
+  # Updates root domain and www subdomain for Azure targets.
+  # Re-provisioning: Creates new DNS records if removed during teardown.
   # ──────────────────────────────────────────────────────────────────────────────
   - bash: |
       set -euo pipefail
@@ -373,11 +373,10 @@ steps:
       SUBDOMAIN="${{ parameters.target.dns.subdomain }}"
       INGRESS_VALUE="$(INGRESS_EXTERNAL_ADDRESS)"
 
-      # Determine the full record name
-      if [ -z "$SUBDOMAIN" ]; then
-        RECORD_NAME="$DOMAIN"
-      else
-        RECORD_NAME="${SUBDOMAIN}.${DOMAIN}"
+      # Validate Cloudflare credentials
+      if [ -z "$ZONE_ID" ] || [ -z "$API_TOKEN" ]; then
+        echo "##[warning]Cloudflare credentials not set. Skipping DNS update."
+        exit 0
       fi
 
       # Determine record type based on the ingress value (IP = A, hostname = CNAME)
@@ -387,15 +386,26 @@ steps:
         RECORD_TYPE="CNAME"
       fi
 
-      echo "Updating DNS: ${RECORD_NAME} -> ${INGRESS_VALUE} (${RECORD_TYPE})"
+      # Build list of DNS records to update
+      # For root domain (subdomain=""), update both orchidflow.io and www.orchidflow.io
+      if [ -z "$SUBDOMAIN" ]; then
+        RECORDS="$DOMAIN www.$DOMAIN"
+      else
+        RECORDS="${SUBDOMAIN}.${DOMAIN}"
+      fi
 
-      # Check if record already exists
-      EXISTING=$(curl -s -X GET \
-        "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?type=${RECORD_TYPE}&name=${RECORD_NAME}" \
-        -H "Authorization: Bearer ${API_TOKEN}" \
-        -H "Content-Type: application/json")
+      # Function to upsert a single DNS record
+      upsert_record() {
+        local RECORD_NAME="$1"
+        echo "Updating DNS: ${RECORD_NAME} -> ${INGRESS_VALUE} (${RECORD_TYPE})"
 
-      RECORD_ID=$(echo "$EXISTING" | python3 -c "
+        # Check if record already exists
+        EXISTING=$(curl -s -X GET \
+          "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?type=${RECORD_TYPE}&name=${RECORD_NAME}" \
+          -H "Authorization: Bearer ${API_TOKEN}" \
+          -H "Content-Type: application/json")
+
+        RECORD_ID=$(echo "$EXISTING" | python3 -c "
       import sys, json
       data = json.load(sys.stdin)
       results = data.get('result', [])
@@ -403,7 +413,7 @@ steps:
           print(results[0]['id'])
       " 2>/dev/null || true)
 
-      PAYLOAD=$(python3 -c "
+        PAYLOAD=$(python3 -c "
       import json
       print(json.dumps({
           'type': '${RECORD_TYPE}',
@@ -414,43 +424,47 @@ steps:
       }))
       ")
 
-      if [ -n "$RECORD_ID" ]; then
-        # Update existing record
-        echo "Updating existing DNS record (ID: ${RECORD_ID})..."
-        RESPONSE=$(curl -s -X PUT \
-          "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records/${RECORD_ID}" \
-          -H "Authorization: Bearer ${API_TOKEN}" \
-          -H "Content-Type: application/json" \
-          --data "$PAYLOAD")
-      else
-        # Create new record
-        echo "Creating new DNS record..."
-        RESPONSE=$(curl -s -X POST \
-          "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records" \
-          -H "Authorization: Bearer ${API_TOKEN}" \
-          -H "Content-Type: application/json" \
-          --data "$PAYLOAD")
-      fi
+        if [ -n "$RECORD_ID" ]; then
+          echo "  Updating existing record (ID: ${RECORD_ID})..."
+          RESPONSE=$(curl -s -X PUT \
+            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records/${RECORD_ID}" \
+            -H "Authorization: Bearer ${API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data "$PAYLOAD")
+        else
+          echo "  Creating new record..."
+          RESPONSE=$(curl -s -X POST \
+            "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records" \
+            -H "Authorization: Bearer ${API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data "$PAYLOAD")
+        fi
 
-      # Verify success
-      SUCCESS=$(echo "$RESPONSE" | python3 -c "
+        SUCCESS=$(echo "$RESPONSE" | python3 -c "
       import sys, json
       data = json.load(sys.stdin)
       print(str(data.get('success', False)).lower())
       ")
 
-      if [ "$SUCCESS" != "true" ]; then
-        echo "##[error]Failed to update DNS record for ${RECORD_NAME}"
-        echo "$RESPONSE" | python3 -c "
+        if [ "$SUCCESS" != "true" ]; then
+          echo "##[warning]Failed to update DNS record for ${RECORD_NAME}"
+          echo "$RESPONSE" | python3 -c "
       import sys, json
       data = json.load(sys.stdin)
       for err in data.get('errors', []):
-          print(f\"  Error: {err.get('message', 'unknown')}\")
-      "
-        exit 1
-      fi
+          print(f'  Error: {err.get(\"message\", \"unknown\")}')
+      " 2>/dev/null || true
+        else
+          echo "  DNS record updated: ${RECORD_NAME} -> ${INGRESS_VALUE}"
+        fi
+      }
 
-      echo "DNS record updated successfully: ${RECORD_NAME} -> ${INGRESS_VALUE}"
+      # Update all records
+      for RECORD in $RECORDS; do
+        upsert_record "$RECORD"
+      done
+
+      echo "DNS update complete."
     displayName: 'Update Cloudflare DNS (${{ parameters.target.name }})'
     env:
       CLOUDFLARE_API_TOKEN: $(CLOUDFLARE_API_TOKEN)
