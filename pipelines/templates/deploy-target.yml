@@ -295,6 +295,33 @@ steps:
         DOCKERHUB_TOKEN: $(DOCKERHUB_TOKEN)
 
   # ──────────────────────────────────────────────────────────────────────────────
+  # Step 8b: Create/update application secret (portfolio-secret)
+  # ──────────────────────────────────────────────────────────────────────────────
+  - bash: |
+      set -euo pipefail
+      echo "Creating/updating portfolio-secret..."
+
+      # Ensure namespace exists
+      kubectl create namespace portfolio --dry-run=client -o yaml | kubectl apply -f -
+
+      # Create portfolio-secret if it doesn't exist (idempotent)
+      # Uses SECRET_KEY from pipeline variable, or generates one if not set
+      if [ -z "${APP_SECRET_KEY:-}" ]; then
+        APP_SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+        echo "Generated new SECRET_KEY (no APP_SECRET_KEY pipeline variable set)"
+      fi
+
+      kubectl create secret generic portfolio-secret \
+        --namespace portfolio \
+        --from-literal=SECRET_KEY="$APP_SECRET_KEY" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+      echo "portfolio-secret created/updated successfully."
+    displayName: 'Create application secret'
+    env:
+      APP_SECRET_KEY: $(APP_SECRET_KEY)
+
+  # ──────────────────────────────────────────────────────────────────────────────
   # Step 9: Kustomize edit set image + kustomize build + kubectl apply
   # Re-provisioning: kubectl apply creates all resources fresh on an empty cluster.
   # ──────────────────────────────────────────────────────────────────────────────
