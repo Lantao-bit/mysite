@@ -155,7 +155,8 @@ steps:
         az aks get-credentials \
           --resource-group ${{ parameters.target.resource_group }} \
           --name ${{ parameters.target.cluster_name }} \
-          --overwrite-existing
+          --overwrite-existing \
+          --admin
         echo "kubectl context configured successfully."
         kubectl cluster-info
       displayName: 'Get AKS credentials (${{ parameters.target.cluster_name }})'
@@ -179,6 +180,8 @@ steps:
       helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
         --namespace ingress-nginx \
         --create-namespace \
+        --set controller.replicaCount=1 \
+        --set controller.service.annotations."service\.beta\.kubernetes\.io/azure-load-balancer-health-probe-request-path"=/healthz \
         --wait
       echo "ingress-nginx installed successfully."
     displayName: 'Helm install ingress-nginx'
