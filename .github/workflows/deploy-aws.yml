@@ -28,6 +28,7 @@ on:
         type: string
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   AWS_REGION: us-east-1
   ECR_REPOSITORY: portfolio
   IMAGE_NAME: ltyang/portfolio
@@ -124,7 +125,10 @@ jobs:
       always() &&
       needs.test.result == 'success' &&
       (needs.build.result == 'success' || needs.build.result == 'skipped') &&
-      (github.event_name != 'workflow_dispatch' || github.event.inputs.target == 'prod-aws-us-east-1')
+      (
+        (github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/tags/v'))) ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'prod-aws-us-east-1')
+      )
     runs-on: ubuntu-latest
     environment: prod-aws
     steps:
@@ -282,8 +286,10 @@ jobs:
       always() &&
       needs.test.result == 'success' &&
       (needs.build.result == 'success' || needs.build.result == 'skipped') &&
-      github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.target == 'dev-aws-us-east-1'
+      (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'dev-aws-us-east-1')
+      )
     runs-on: ubuntu-latest
     environment: dev-aws
     steps:
