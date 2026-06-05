@@ -48,6 +48,11 @@ resource "aws_eks_cluster" "main" {
     endpoint_private_access = true
   }
 
+  access_config {
+    authentication_mode                         = "API_AND_CONFIG_MAP"
+    bootstrap_cluster_creator_admin_permissions = true
+  }
+
   tags = {
     Name = var.cluster_name
   }
@@ -56,6 +61,32 @@ resource "aws_eks_cluster" "main" {
     aws_iam_role_policy_attachment.eks_cluster_policy,
     aws_iam_role_policy_attachment.eks_vpc_resource_controller,
   ]
+}
+
+# -----------------------------------------------------------------------------
+# EKS Access Entries (cluster admin for specified IAM principals)
+# -----------------------------------------------------------------------------
+
+resource "aws_eks_access_entry" "admins" {
+  count = length(var.cluster_admin_arns)
+
+  cluster_name  = aws_eks_cluster.main.name
+  principal_arn = var.cluster_admin_arns[count.index]
+  type          = "STANDARD"
+}
+
+resource "aws_eks_access_policy_association" "admins" {
+  count = length(var.cluster_admin_arns)
+
+  cluster_name  = aws_eks_cluster.main.name
+  principal_arn = var.cluster_admin_arns[count.index]
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [aws_eks_access_entry.admins]
 }
 
 # -----------------------------------------------------------------------------

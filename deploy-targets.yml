@@ -7,7 +7,7 @@
 
 targets:
   - name: prod-azure-eastus
-    enabled: true
+    enabled: false
     provider: azure
     region: eastus
     environment: prod
