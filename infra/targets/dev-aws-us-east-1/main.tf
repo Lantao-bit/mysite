@@ -8,6 +8,7 @@ module "aws" {
   vpc_cidr     = "10.2.0.0/16"
   instance_type = "t3.small"
   k8s_version  = "1.31"
+  create_ecr   = false
 
   cluster_admin_arns = [
     "arn:aws:iam::712416941115:user/OFP_Admin",

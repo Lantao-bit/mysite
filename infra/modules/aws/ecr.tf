@@ -2,7 +2,12 @@
 # ECR Repository
 # -----------------------------------------------------------------------------
 
+# ECR is account-scoped, so only one target should create it.
+# Other targets reference it via data source.
+
 resource "aws_ecr_repository" "main" {
+  count = var.create_ecr ? 1 : 0
+
   name                 = var.ecr_repo_name
   image_tag_mutability = "MUTABLE"
   force_delete         = false
@@ -12,16 +17,30 @@ resource "aws_ecr_repository" "main" {
   }
 
   tags = {
-    Name = "${var.project_name}-${var.environment}-ecr"
+    Name = "${var.project_name}-ecr"
   }
 }
 
+data "aws_ecr_repository" "main" {
+  count = var.create_ecr ? 0 : 1
+
+  name = var.ecr_repo_name
+}
+
+locals {
+  ecr_repo_arn  = var.create_ecr ? aws_ecr_repository.main[0].arn : data.aws_ecr_repository.main[0].arn
+  ecr_repo_url  = var.create_ecr ? aws_ecr_repository.main[0].repository_url : data.aws_ecr_repository.main[0].repository_url
+  ecr_repo_name = var.create_ecr ? aws_ecr_repository.main[0].name : data.aws_ecr_repository.main[0].name
+}
+
 # -----------------------------------------------------------------------------
-# ECR Lifecycle Policy
+# ECR Lifecycle Policy (only when we own the repo)
 # -----------------------------------------------------------------------------
 
 resource "aws_ecr_lifecycle_policy" "main" {
-  repository = aws_ecr_repository.main.name
+  count = var.create_ecr ? 1 : 0
+
+  repository = local.ecr_repo_name
 
   policy = jsonencode({
     rules = [
@@ -75,8 +94,8 @@ resource "aws_iam_role_policy" "ecr_pull" {
           "ecr:GetAuthorizationToken",
         ]
         Resource = [
-          aws_ecr_repository.main.arn,
-          "${aws_ecr_repository.main.arn}/*",
+          local.ecr_repo_arn,
+          "${local.ecr_repo_arn}/*",
         ]
       },
       {

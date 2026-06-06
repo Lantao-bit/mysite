@@ -61,6 +61,12 @@ variable "ecr_repo_name" {
   default     = "portfolio"
 }
 
+variable "create_ecr" {
+  description = "Whether to create the ECR repository (set false if shared repo already exists)"
+  type        = bool
+  default     = true
+}
+
 variable "cluster_admin_arns" {
   description = "List of IAM principal ARNs to grant EKS cluster admin access"
   type        = list(string)

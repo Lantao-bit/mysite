@@ -15,7 +15,7 @@ output "cluster_name" {
 
 output "ecr_repository_url" {
   description = "Full ECR repository URL"
-  value       = aws_ecr_repository.main.repository_url
+  value       = local.ecr_repo_url
 }
 
 output "node_role_arn" {
