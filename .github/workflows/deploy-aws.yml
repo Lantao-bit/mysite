@@ -171,10 +171,16 @@ jobs:
 
       - name: Install ingress-nginx
         run: |
+          # Clean up failed release if present
+          status=$(helm status ingress-nginx -n ingress-nginx 2>/dev/null | grep STATUS | awk '{print $2}' || true)
+          if [ "$status" = "failed" ] || [ "$status" = "pending-install" ] || [ "$status" = "pending-upgrade" ]; then
+            echo "Cleaning up ingress-nginx (status: $status)"
+            helm uninstall ingress-nginx -n ingress-nginx --wait 2>/dev/null || true
+          fi
           helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
           helm repo update
           helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-            --namespace ingress-nginx --create-namespace --wait
+            --namespace ingress-nginx --create-namespace --wait --timeout 300s
 
       - name: Wait for Load Balancer
         run: |
@@ -195,13 +201,19 @@ jobs:
 
       - name: Install cert-manager
         run: |
+          # Clean up failed release if present
+          status=$(helm status cert-manager -n cert-manager 2>/dev/null | grep STATUS | awk '{print $2}' || true)
+          if [ "$status" = "failed" ] || [ "$status" = "pending-install" ] || [ "$status" = "pending-upgrade" ]; then
+            echo "Cleaning up cert-manager (status: $status)"
+            helm uninstall cert-manager -n cert-manager --wait 2>/dev/null || true
+          fi
           helm repo add jetstack https://charts.jetstack.io
           helm repo update
           helm upgrade --install cert-manager jetstack/cert-manager \
             --namespace cert-manager --create-namespace \
-            --set installCRDs=true --wait --timeout 120s
+            --set installCRDs=true --wait --timeout 300s
           kubectl wait --for=condition=Available \
-            deployment/cert-manager-webhook -n cert-manager --timeout=120s
+            deployment/cert-manager-webhook -n cert-manager --timeout=180s
 
       - name: Create ECR pull secret
         run: |
@@ -332,10 +344,16 @@ jobs:
 
       - name: Install ingress-nginx
         run: |
+          # Clean up failed release if present
+          status=$(helm status ingress-nginx -n ingress-nginx 2>/dev/null | grep STATUS | awk '{print $2}' || true)
+          if [ "$status" = "failed" ] || [ "$status" = "pending-install" ] || [ "$status" = "pending-upgrade" ]; then
+            echo "Cleaning up ingress-nginx (status: $status)"
+            helm uninstall ingress-nginx -n ingress-nginx --wait 2>/dev/null || true
+          fi
           helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
           helm repo update
           helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-            --namespace ingress-nginx --create-namespace --wait
+            --namespace ingress-nginx --create-namespace --wait --timeout 300s
 
       - name: Wait for Load Balancer
         run: |
@@ -353,11 +371,19 @@ jobs:
 
       - name: Install cert-manager
         run: |
+          # Clean up failed release if present
+          status=$(helm status cert-manager -n cert-manager 2>/dev/null | grep STATUS | awk '{print $2}' || true)
+          if [ "$status" = "failed" ] || [ "$status" = "pending-install" ] || [ "$status" = "pending-upgrade" ]; then
+            echo "Cleaning up cert-manager (status: $status)"
+            helm uninstall cert-manager -n cert-manager --wait 2>/dev/null || true
+          fi
           helm repo add jetstack https://charts.jetstack.io
           helm repo update
           helm upgrade --install cert-manager jetstack/cert-manager \
             --namespace cert-manager --create-namespace \
-            --set installCRDs=true --wait --timeout 120s
+            --set installCRDs=true --wait --timeout 300s
+          kubectl wait --for=condition=Available \
+            deployment/cert-manager-webhook -n cert-manager --timeout=180s
 
       - name: Create ECR pull secret
         run: |
