@@ -161,3 +161,62 @@ resource "aws_eks_node_group" "main" {
     aws_iam_role_policy_attachment.ecr_read_only,
   ]
 }
+
+# -----------------------------------------------------------------------------
+# EBS CSI Driver (required for PersistentVolume provisioning on EKS)
+# -----------------------------------------------------------------------------
+
+# OIDC provider for IRSA (IAM Roles for Service Accounts)
+resource "aws_iam_openid_connect_provider" "eks" {
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = ["9e99a48a9960b14926bb7f3b02e22da2b0ab7280"]
+  url             = aws_eks_cluster.main.identity[0].oidc[0].issuer
+
+  tags = {
+    Name = "${var.cluster_name}-oidc"
+  }
+}
+
+locals {
+  oidc_issuer = replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")
+}
+
+resource "aws_iam_role" "ebs_csi" {
+  name = "${var.cluster_name}-ebs-csi-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.eks.arn
+        }
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "${local.oidc_issuer}:aud" = "sts.amazonaws.com"
+            "${local.oidc_issuer}:sub" = "system:serviceaccount:kube-system:ebs-csi-controller-sa"
+          }
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name = "${var.cluster_name}-ebs-csi-role"
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "ebs_csi" {
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+  role       = aws_iam_role.ebs_csi.name
+}
+
+resource "aws_eks_addon" "ebs_csi" {
+  cluster_name             = aws_eks_cluster.main.name
+  addon_name               = "aws-ebs-csi-driver"
+  service_account_role_arn = aws_iam_role.ebs_csi.arn
+
+  depends_on = [aws_eks_node_group.main]
+}
