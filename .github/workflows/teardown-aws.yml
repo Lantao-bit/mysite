@@ -59,8 +59,10 @@ jobs:
           TARGET="${{ github.event.inputs.target }}"
           if [ "$TARGET" = "prod-aws-us-east-1" ]; then
             RECORD_NAME="aws.orchidflow.io"
+            CLUSTER_NAME="portfolio-eks"
           elif [ "$TARGET" = "dev-aws-us-east-1" ]; then
             RECORD_NAME="dev-aws.orchidflow.io"
+            CLUSTER_NAME="portfolio-eks-dev"
           fi
 
           echo "Removing DNS record: $RECORD_NAME"
@@ -83,6 +85,49 @@ jobs:
               "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${RECORD_ID}" \
               -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}"
             echo "DNS record deleted."
+          fi
+
+          echo "CLUSTER_NAME=$CLUSTER_NAME" >> "$GITHUB_ENV"
+
+      - name: Clean up Kubernetes LoadBalancers
+        run: |
+          # Connect to cluster (may fail if already deleted — that's fine)
+          if aws eks update-kubeconfig --name "$CLUSTER_NAME" --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "Connected to cluster. Removing LoadBalancer services..."
+            kubectl delete svc --all -n ingress-nginx 2>/dev/null || true
+            kubectl delete svc --all -n portfolio 2>/dev/null || true
+            helm uninstall ingress-nginx -n ingress-nginx 2>/dev/null || true
+            helm uninstall cert-manager -n cert-manager 2>/dev/null || true
+            echo "Waiting 60s for AWS to release ENIs and ELBs..."
+            sleep 60
+          else
+            echo "Cluster not reachable — checking for orphaned ELBs via AWS API..."
+          fi
+
+          # Get VPC ID from Terraform state
+          cd infra/targets/${{ github.event.inputs.target }}
+          terraform init -input=false > /dev/null 2>&1
+          VPC_ID=$(terraform output -raw vpc_id 2>/dev/null || terraform state show 'module.aws.aws_vpc.main' 2>/dev/null | grep '"id"' | head -1 | awk -F'"' '{print $4}' || true)
+
+          if [ -n "$VPC_ID" ]; then
+            echo "VPC: $VPC_ID — checking for orphaned Classic ELBs..."
+            ELBS=$(aws elb describe-load-balancers --region ${{ env.AWS_REGION }} --query "LoadBalancerDescriptions[?VPCId==\`$VPC_ID\`].LoadBalancerName" --output text 2>/dev/null || true)
+            for lb in $ELBS; do
+              echo "Deleting Classic ELB: $lb"
+              aws elb delete-load-balancer --load-balancer-name "$lb" --region ${{ env.AWS_REGION }}
+            done
+
+            echo "Checking for orphaned NLB/ALBs..."
+            ARNS=$(aws elbv2 describe-load-balancers --region ${{ env.AWS_REGION }} --query "LoadBalancers[?VpcId==\`$VPC_ID\`].LoadBalancerArn" --output text 2>/dev/null || true)
+            for arn in $ARNS; do
+              echo "Deleting LB: $arn"
+              aws elbv2 delete-load-balancer --load-balancer-arn "$arn" --region ${{ env.AWS_REGION }}
+            done
+
+            if [ -n "$ELBS" ] || [ -n "$ARNS" ]; then
+              echo "Waiting 60s for ENI cleanup..."
+              sleep 60
+            fi
           fi
 
       - name: Setup Terraform
