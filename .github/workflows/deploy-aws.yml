@@ -238,6 +238,13 @@ jobs:
             --docker-password="${{ secrets.DOCKERHUB_TOKEN }}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
+          # Application secret
+          APP_SECRET_KEY=$(openssl rand -hex 32)
+          kubectl create secret generic portfolio-secret \
+            --namespace portfolio \
+            --from-literal=SECRET_KEY="$APP_SECRET_KEY" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
       - name: Deploy with Kustomize
         run: |
           TAG=${{ steps.tag.outputs.tag }}
@@ -417,6 +424,13 @@ jobs:
             --docker-server="https://index.docker.io/v1/" \
             --docker-username="${{ secrets.DOCKERHUB_USERNAME }}" \
             --docker-password="${{ secrets.DOCKERHUB_TOKEN }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          # Application secret
+          APP_SECRET_KEY=$(openssl rand -hex 32)
+          kubectl create secret generic portfolio-secret \
+            --namespace portfolio \
+            --from-literal=SECRET_KEY="$APP_SECRET_KEY" \
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Deploy with Kustomize
