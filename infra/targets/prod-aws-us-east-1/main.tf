@@ -6,7 +6,7 @@ module "aws" {
   environment  = "prod"
   project_name = "portfolio"
   vpc_cidr     = "10.1.0.0/16"
-  instance_type = "t3.small"
+  instance_type = "t3.medium"
   k8s_version  = "1.31"
 
   cluster_admin_arns = [
