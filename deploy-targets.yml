@@ -23,7 +23,7 @@ targets:
     resource_group: portfolio-rg
 
   - name: prod-aws-us-east-1
-    enabled: false
+    enabled: true
     provider: aws
     region: us-east-1
     environment: prod
@@ -39,7 +39,7 @@ targets:
     ecr_repo: portfolio
 
   - name: dev-aws-us-east-1
-    enabled: true
+    enabled: false
     provider: aws
     region: us-east-1
     environment: dev
