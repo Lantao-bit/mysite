@@ -3,7 +3,9 @@
 # -----------------------------------------------------------------------------
 
 # ECR is account-scoped, so only one target should create it.
-# Other targets reference it via data source.
+# Other targets construct the ARN/URL from the known repo name (no API call).
+
+data "aws_caller_identity" "current" {}
 
 resource "aws_ecr_repository" "main" {
   count = var.create_ecr ? 1 : 0
@@ -21,16 +23,10 @@ resource "aws_ecr_repository" "main" {
   }
 }
 
-data "aws_ecr_repository" "main" {
-  count = var.create_ecr ? 0 : 1
-
-  name = var.ecr_repo_name
-}
-
 locals {
-  ecr_repo_arn  = var.create_ecr ? aws_ecr_repository.main[0].arn : data.aws_ecr_repository.main[0].arn
-  ecr_repo_url  = var.create_ecr ? aws_ecr_repository.main[0].repository_url : data.aws_ecr_repository.main[0].repository_url
-  ecr_repo_name = var.create_ecr ? aws_ecr_repository.main[0].name : data.aws_ecr_repository.main[0].name
+  account_id   = data.aws_caller_identity.current.account_id
+  ecr_repo_arn = var.create_ecr ? aws_ecr_repository.main[0].arn : "arn:aws:ecr:${var.region}:${local.account_id}:repository/${var.ecr_repo_name}"
+  ecr_repo_url = var.create_ecr ? aws_ecr_repository.main[0].repository_url : "${local.account_id}.dkr.ecr.${var.region}.amazonaws.com/${var.ecr_repo_name}"
 }
 
 # -----------------------------------------------------------------------------
@@ -40,7 +36,7 @@ locals {
 resource "aws_ecr_lifecycle_policy" "main" {
   count = var.create_ecr ? 1 : 0
 
-  repository = local.ecr_repo_name
+  repository = aws_ecr_repository.main[0].name
 
   policy = jsonencode({
     rules = [
