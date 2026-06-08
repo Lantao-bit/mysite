@@ -180,7 +180,8 @@ jobs:
           helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
           helm repo update
           helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-            --namespace ingress-nginx --create-namespace --wait --timeout 300s
+            --namespace ingress-nginx --create-namespace --wait --timeout 300s \
+            --set controller.admissionWebhooks.enabled=false
 
       - name: Wait for Load Balancer
         run: |
@@ -353,7 +354,8 @@ jobs:
           helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
           helm repo update
           helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-            --namespace ingress-nginx --create-namespace --wait --timeout 300s
+            --namespace ingress-nginx --create-namespace --wait --timeout 300s \
+            --set controller.admissionWebhooks.enabled=false
 
       - name: Wait for Load Balancer
         run: |
