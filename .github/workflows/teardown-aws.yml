@@ -25,11 +25,13 @@ on:
         type: string
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   AWS_REGION: us-east-1
 
 jobs:
   teardown:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: ${{ github.event.inputs.confirm == 'destroy' }}
     steps:
       - uses: actions/checkout@v4
@@ -124,5 +126,5 @@ jobs:
         run: |
           echo "✅ Teardown complete: ${{ github.event.inputs.target }}"
           echo "   Preserve ECR: ${{ github.event.inputs.preserve_ecr }}"
-          echo "   State backend preserved (S3 bucket + DynamoDB table)"
+          echo "   State backend preserved (S3 bucket)"
           echo "   Re-deploy anytime by running the deploy workflow."
