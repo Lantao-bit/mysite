@@ -34,7 +34,7 @@ variable "instance_type" {
 variable "k8s_version" {
   description = "Kubernetes version for the EKS cluster"
   type        = string
-  default     = "1.31"
+  default     = "1.32"
 }
 
 variable "node_desired" {
