@@ -96,18 +96,26 @@ jobs:
             echo "Connected to cluster. Removing LoadBalancer services..."
             kubectl delete svc --all -n ingress-nginx 2>/dev/null || true
             kubectl delete svc --all -n portfolio 2>/dev/null || true
-            helm uninstall ingress-nginx -n ingress-nginx 2>/dev/null || true
-            helm uninstall cert-manager -n cert-manager 2>/dev/null || true
+            # Delete all namespaces with LB services to ensure ENIs are released
+            kubectl delete namespace ingress-nginx 2>/dev/null || true
             echo "Waiting 60s for AWS to release ENIs and ELBs..."
             sleep 60
           else
             echo "Cluster not reachable — checking for orphaned ELBs via AWS API..."
           fi
 
-          # Get VPC ID from Terraform state
-          cd infra/targets/${{ github.event.inputs.target }}
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Clean up orphaned Load Balancers
+        working-directory: infra/targets/${{ github.event.inputs.target }}
+        run: |
           terraform init -input=false > /dev/null 2>&1
-          VPC_ID=$(terraform output -raw vpc_id 2>/dev/null || terraform state show 'module.aws.aws_vpc.main' 2>/dev/null | grep '"id"' | head -1 | awk -F'"' '{print $4}' || true)
+
+          # Get VPC ID from state
+          VPC_ID=$(terraform state show 'module.aws.aws_vpc.main' 2>/dev/null | grep '"id"' | head -1 | awk -F'"' '{print $4}' || true)
 
           if [ -n "$VPC_ID" ]; then
             echo "VPC: $VPC_ID — checking for orphaned Classic ELBs..."
@@ -128,12 +136,9 @@ jobs:
               echo "Waiting 60s for ENI cleanup..."
               sleep 60
             fi
+          else
+            echo "No VPC found in state — skipping ELB cleanup."
           fi
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_wrapper: false
 
       - name: Terraform Destroy
         working-directory: infra/targets/${{ github.event.inputs.target }}
