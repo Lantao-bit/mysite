@@ -24,7 +24,7 @@ variable "dns_prefix" {
 
 variable "node_vm_size" {
   type        = string
-  default     = "Standard_dc2ads_v5"
+  default     = "Standard_D2s_v3"
   description = "VM size for node pool (Free Tier eligible)"
 }
 
