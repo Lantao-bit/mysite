@@ -33,4 +33,4 @@ patches:
 images:
   - name: ltyang/portfolio
     newName: ltyang/portfolio
-    newTag: BUILD_ID
+    newTag: latest

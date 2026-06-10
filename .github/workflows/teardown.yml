@@ -1,0 +1,215 @@
+# .github/workflows/teardown.yml
+# Unified multi-cloud teardown pipeline.
+# Manual dispatch only — select any target from deploy-targets.yml.
+
+name: Teardown
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Target to tear down (must match a name in deploy-targets.yml)'
+        required: true
+        type: string
+      preserve_registry:
+        description: 'Preserve container registry resources (ECR repo, images)'
+        required: true
+        type: boolean
+        default: true
+      confirm:
+        description: 'Type "destroy" to confirm'
+        required: true
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  teardown:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: ${{ github.event.inputs.confirm == 'destroy' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve target metadata
+        id: target
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+          TARGET_NAME="${{ github.event.inputs.target }}"
+
+          PROVIDER=$(yq ".targets[] | select(.name == \"$TARGET_NAME\") | .provider" deploy-targets.yml)
+          REGION=$(yq ".targets[] | select(.name == \"$TARGET_NAME\") | .region" deploy-targets.yml)
+          SUBDOMAIN=$(yq ".targets[] | select(.name == \"$TARGET_NAME\") | .dns_subdomain" deploy-targets.yml)
+
+          if [ -z "$PROVIDER" ] || [ "$PROVIDER" = "null" ]; then
+            echo "::error::Target '$TARGET_NAME' not found in deploy-targets.yml"
+            exit 1
+          fi
+
+          # Derive cluster_name and resource_group from target name
+          CLUSTER="portfolio-${TARGET_NAME}"
+          RG="portfolio-rg-${TARGET_NAME}"
+
+          echo "provider=$PROVIDER" >> "$GITHUB_OUTPUT"
+          echo "region=$REGION" >> "$GITHUB_OUTPUT"
+          echo "cluster_name=$CLUSTER" >> "$GITHUB_OUTPUT"
+          echo "resource_group=$RG" >> "$GITHUB_OUTPUT"
+          echo "dns_subdomain=$SUBDOMAIN" >> "$GITHUB_OUTPUT"
+
+          echo "Target: $TARGET_NAME (provider=$PROVIDER, region=$REGION, cluster=$CLUSTER)"
+
+      # ── Provider credentials ────────────────────────────────────────────────
+      - name: Configure AWS credentials
+        if: steps.target.outputs.provider == 'aws'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ steps.target.outputs.region }}
+
+      - name: Configure Azure credentials
+        if: steps.target.outputs.provider == 'azure'
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+      # ── DNS removal ─────────────────────────────────────────────────────────
+      - name: Remove Cloudflare DNS record
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+        run: |
+          DOMAIN="orchidflow.io"
+          SUBDOMAIN="${{ steps.target.outputs.dns_subdomain }}"
+
+          if [ -z "$SUBDOMAIN" ] || [ "$SUBDOMAIN" = "null" ]; then
+            RECORDS="$DOMAIN www.$DOMAIN"
+          else
+            RECORDS="${SUBDOMAIN}.${DOMAIN}"
+          fi
+
+          for RECORD_NAME in $RECORDS; do
+            echo "Removing DNS: $RECORD_NAME"
+            RESPONSE=$(curl -s \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${RECORD_NAME}")
+            RECORD_ID=$(echo "$RESPONSE" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          results = data.get('result', [])
+          print(results[0]['id'] if results else '')
+          " 2>/dev/null || true)
+
+            if [ -z "$RECORD_ID" ]; then
+              echo "  No record found — skipping."
+            else
+              curl -s -X DELETE \
+                "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${RECORD_ID}" \
+                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}"
+              echo "  Deleted."
+            fi
+          done
+
+      # ── K8s cleanup (release LBs before infra destroy) ──────────────────────
+      - name: Clean up Kubernetes LoadBalancers (AWS)
+        if: steps.target.outputs.provider == 'aws'
+        run: |
+          if aws eks update-kubeconfig --name "${{ steps.target.outputs.cluster_name }}" --region ${{ steps.target.outputs.region }} 2>/dev/null; then
+            echo "Connected. Removing LB services..."
+            kubectl delete svc --all -n ingress-nginx 2>/dev/null || true
+            kubectl delete svc --all -n portfolio 2>/dev/null || true
+            kubectl delete namespace ingress-nginx 2>/dev/null || true
+            echo "Waiting 60s for ENI/ELB release..."
+            sleep 60
+          else
+            echo "Cluster not reachable — will clean up ELBs via API."
+          fi
+
+      - name: Clean up Kubernetes LoadBalancers (Azure)
+        if: steps.target.outputs.provider == 'azure'
+        run: |
+          if az aks get-credentials --resource-group "${{ steps.target.outputs.resource_group }}" --name "${{ steps.target.outputs.cluster_name }}" --overwrite-existing --admin 2>/dev/null; then
+            echo "Connected. Removing LB services..."
+            kubectl delete svc --all -n ingress-nginx 2>/dev/null || true
+            kubectl delete svc --all -n portfolio 2>/dev/null || true
+            kubectl delete namespace ingress-nginx 2>/dev/null || true
+            echo "Waiting 60s for LB release..."
+            sleep 60
+          else
+            echo "Cluster not reachable — proceeding with destroy."
+          fi
+
+      # ── Terraform destroy ───────────────────────────────────────────────────
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Clean up orphaned AWS Load Balancers
+        if: steps.target.outputs.provider == 'aws'
+        working-directory: infra/targets/${{ github.event.inputs.target }}
+        run: |
+          terraform init -input=false > /dev/null 2>&1
+          VPC_ID=$(terraform state show 'module.aws.aws_vpc.main' 2>/dev/null | grep '"id"' | head -1 | awk -F'"' '{print $4}' || true)
+
+          if [ -n "$VPC_ID" ]; then
+            echo "VPC: $VPC_ID"
+            ELBS=$(aws elb describe-load-balancers --region ${{ steps.target.outputs.region }} --query "LoadBalancerDescriptions[?VPCId==\`$VPC_ID\`].LoadBalancerName" --output text 2>/dev/null || true)
+            for lb in $ELBS; do
+              echo "Deleting Classic ELB: $lb"
+              aws elb delete-load-balancer --load-balancer-name "$lb" --region ${{ steps.target.outputs.region }}
+            done
+            ARNS=$(aws elbv2 describe-load-balancers --region ${{ steps.target.outputs.region }} --query "LoadBalancers[?VpcId==\`$VPC_ID\`].LoadBalancerArn" --output text 2>/dev/null || true)
+            for arn in $ARNS; do
+              echo "Deleting LB: $arn"
+              aws elbv2 delete-load-balancer --load-balancer-arn "$arn" --region ${{ steps.target.outputs.region }}
+            done
+            if [ -n "$ELBS" ] || [ -n "$ARNS" ]; then
+              sleep 60
+            fi
+          fi
+
+      - name: Terraform Destroy
+        working-directory: infra/targets/${{ github.event.inputs.target }}
+        run: |
+          terraform init -input=false
+
+          if [ "${{ github.event.inputs.preserve_registry }}" = "true" ]; then
+            RESOURCES=$(terraform state list 2>/dev/null || echo "")
+            if [ -z "$RESOURCES" ]; then
+              echo "No resources in state — nothing to destroy."
+              exit 0
+            fi
+
+            TARGET_FLAGS=""
+            while IFS= read -r resource; do
+              if echo "$resource" | grep -qi "ecr"; then
+                echo "Preserving: $resource"
+              else
+                TARGET_FLAGS="$TARGET_FLAGS -target=$resource"
+              fi
+            done <<< "$RESOURCES"
+
+            if [ -z "$TARGET_FLAGS" ]; then
+              echo "Only registry resources found — nothing to destroy."
+              exit 0
+            fi
+
+            eval terraform destroy -auto-approve -input=false $TARGET_FLAGS
+          else
+            terraform destroy -auto-approve -input=false
+          fi
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
+      - name: Summary
+        run: |
+          echo "✅ Teardown complete: ${{ github.event.inputs.target }}"
+          echo "   Provider: ${{ steps.target.outputs.provider }}"
+          echo "   Preserve registry: ${{ github.event.inputs.preserve_registry }}"

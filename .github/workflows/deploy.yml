@@ -1,0 +1,454 @@
+# .github/workflows/deploy.yml
+# Unified multi-cloud deployment pipeline.
+# Reads deploy-targets.yml → test → build → fan-out deploy to all enabled targets.
+#
+# Triggers: push to main, release/*, v* tags, or manual dispatch.
+# Each target deploys independently and in parallel.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main, 'release/*']
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Specific target to deploy (empty = all matching targets)'
+        required: false
+        default: ''
+        type: string
+      image_tag:
+        description: 'Image tag to deploy (empty = build new)'
+        required: false
+        default: ''
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  IMAGE_NAME: ltyang/portfolio
+  ECR_REPOSITORY: portfolio
+  AWS_REGION: us-east-1
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────────────
+  # Job: Determine deployment matrix from deploy-targets.yml
+  # ────────────────────────────────────────────────────────────────────────────
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.matrix.outputs.targets }}
+      has_targets: ${{ steps.matrix.outputs.has_targets }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build deployment matrix
+        id: matrix
+        run: |
+          # Install yq for YAML parsing
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+          # Determine current ref context
+          REF="${GITHUB_REF}"
+          EVENT="${GITHUB_EVENT_NAME}"
+          MANUAL_TARGET="${{ github.event.inputs.target }}"
+
+          echo "Event: $EVENT, Ref: $REF, Manual target: $MANUAL_TARGET"
+
+          # Filter targets based on trigger rules
+          TARGETS=$(yq -o=json '.targets' deploy-targets.yml | python3 -c "
+          import sys, json, re
+
+          targets = json.load(sys.stdin)
+          ref = '$REF'
+          event = '$EVENT'
+          manual_target = '$MANUAL_TARGET'
+
+          def ref_matches_trigger(target):
+              \"\"\"Check if current ref matches target's trigger config.\"\"\"
+              triggers = target.get('trigger', {})
+              branches = triggers.get('branches', [])
+              tags = triggers.get('tags', [])
+
+              # Push to branch
+              if ref.startswith('refs/heads/'):
+                  branch = ref.replace('refs/heads/', '')
+                  for pattern in branches:
+                      # Convert glob to regex
+                      regex = pattern.replace('*', '.*')
+                      if re.match(f'^{regex}$', branch):
+                          return True
+
+              # Push tag
+              if ref.startswith('refs/tags/'):
+                  tag = ref.replace('refs/tags/', '')
+                  for pattern in tags:
+                      regex = pattern.replace('*', '.*')
+                      if re.match(f'^{regex}$', tag):
+                          return True
+
+              return False
+
+          result = []
+          for t in targets:
+              if not t.get('enabled', False):
+                  continue
+
+              # Manual dispatch with specific target
+              if event == 'workflow_dispatch' and manual_target:
+                  if t['name'] == manual_target:
+                      result.append(t)
+                  continue
+
+              # Manual dispatch without target = all enabled
+              if event == 'workflow_dispatch' and not manual_target:
+                  result.append(t)
+                  continue
+
+              # Push event — check trigger rules
+              if ref_matches_trigger(t):
+                  result.append(t)
+
+          # Output as JSON array of target names + metadata
+          matrix = []
+          for t in result:
+              name = t['name']
+              provider = t['provider']
+              # Derive cluster_name and resource_group
+              cluster_name = f'portfolio-{name}'
+              resource_group = f'portfolio-rg-{name}' if provider == 'azure' else ''
+              registry = 'ecr' if provider == 'aws' else 'dockerhub'
+
+              matrix.append({
+                  'name': name,
+                  'provider': provider,
+                  'region': t['region'],
+                  'github_environment': t.get('github_environment', ''),
+                  'dns_subdomain': t.get('dns_subdomain', t.get('dns', {}).get('subdomain', '')),
+                  'registry': registry,
+                  'cluster_name': cluster_name,
+                  'resource_group': resource_group,
+              })
+
+          print(json.dumps(matrix))
+          ")
+
+          echo "Matched targets: $TARGETS"
+          echo "targets=$TARGETS" >> "$GITHUB_OUTPUT"
+
+          # Check if we have any targets
+          HAS=$(echo "$TARGETS" | python3 -c "import sys,json; t=json.load(sys.stdin); print('true' if t else 'false')")
+          echo "has_targets=$HAS" >> "$GITHUB_OUTPUT"
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Job: Test
+  # ────────────────────────────────────────────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r portfolio/requirements.txt
+
+      - name: Run tests
+        run: |
+          python -m pytest tests/ -v --tb=short \
+            --cov=portfolio \
+            --cov-report=term-missing \
+            --cov-fail-under=80
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Job: Build & Push (once, to all registries)
+  # ────────────────────────────────────────────────────────────────────────────
+  build:
+    needs: [test, setup]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: |
+      needs.setup.outputs.has_targets == 'true' &&
+      (github.event.inputs.image_tag == '' || github.event.inputs.image_tag == null)
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set image tag
+        id: meta
+        run: echo "tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        run: |
+          TAG=${{ steps.meta.outputs.tag }}
+          ECR_REGISTRY=${{ steps.ecr-login.outputs.registry }}
+
+          docker build --platform linux/amd64 \
+            -t ${{ env.IMAGE_NAME }}:${TAG} \
+            -t ${{ env.IMAGE_NAME }}:latest \
+            -t ${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:${TAG} \
+            -t ${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:latest \
+            .
+
+          # Push to Docker Hub
+          docker push ${{ env.IMAGE_NAME }}:${TAG}
+          docker push ${{ env.IMAGE_NAME }}:latest
+
+          # Push to ECR
+          docker push ${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:${TAG}
+          docker push ${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:latest
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Job: Deploy (fan-out to all matched targets in parallel)
+  # ────────────────────────────────────────────────────────────────────────────
+  deploy:
+    needs: [setup, test, build]
+    if: |
+      always() &&
+      needs.test.result == 'success' &&
+      needs.setup.outputs.has_targets == 'true' &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    environment: ${{ matrix.target.github_environment || matrix.target.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine image tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            echo "tag=${{ github.event.inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ needs.build.outputs.image_tag }}" ]; then
+            echo "tag=${{ needs.build.outputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── Provider credentials ────────────────────────────────────────────────
+      - name: Configure AWS credentials
+        if: matrix.target.provider == 'aws'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ matrix.target.region }}
+
+      - name: Configure Azure credentials
+        if: matrix.target.provider == 'azure'
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+      # ── Terraform ───────────────────────────────────────────────────────────
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Apply
+        working-directory: infra/targets/${{ matrix.target.name }}
+        run: |
+          terraform init -input=false
+          terraform apply -input=false -auto-approve
+        env:
+          # Azure provider needs ARM_* vars; AWS provider uses credentials from configure-aws-credentials step
+          ARM_CLIENT_ID: ${{ matrix.target.provider == 'azure' && secrets.AZURE_CLIENT_ID || '' }}
+          ARM_CLIENT_SECRET: ${{ matrix.target.provider == 'azure' && secrets.AZURE_CLIENT_SECRET || '' }}
+          ARM_SUBSCRIPTION_ID: ${{ matrix.target.provider == 'azure' && secrets.AZURE_SUBSCRIPTION_ID || '' }}
+          ARM_TENANT_ID: ${{ matrix.target.provider == 'azure' && secrets.AZURE_TENANT_ID || '' }}
+
+      # ── Cluster access ──────────────────────────────────────────────────────
+      - name: Configure kubectl (AWS)
+        if: matrix.target.provider == 'aws'
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ matrix.target.cluster_name }} \
+            --region ${{ matrix.target.region }}
+
+      - name: Configure kubectl (Azure)
+        if: matrix.target.provider == 'azure'
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ matrix.target.resource_group }} \
+            --name ${{ matrix.target.cluster_name }} \
+            --overwrite-existing --admin
+
+      # ── Helm: ingress-nginx ─────────────────────────────────────────────────
+      - name: Install ingress-nginx
+        run: |
+          # Clean up failed release if present
+          status=$(helm status ingress-nginx -n ingress-nginx 2>/dev/null | grep STATUS | awk '{print $2}' || true)
+          if [ "$status" = "failed" ] || [ "$status" = "pending-install" ] || [ "$status" = "pending-upgrade" ]; then
+            helm uninstall ingress-nginx -n ingress-nginx --wait 2>/dev/null || true
+          fi
+          helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+          helm repo update
+          helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+            --namespace ingress-nginx --create-namespace --wait --timeout 300s \
+            --set controller.admissionWebhooks.enabled=false \
+            --set controller.service.annotations."service\.beta\.kubernetes\.io/azure-load-balancer-health-probe-request-path"=/healthz
+
+      - name: Wait for Load Balancer
+        run: |
+          echo "Waiting for external address (timeout: 300s)..."
+          for i in $(seq 1 30); do
+            EXTERNAL=$(kubectl get svc ingress-nginx-controller -n ingress-nginx \
+              -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+            if [ -n "$EXTERNAL" ]; then
+              echo "External address: $EXTERNAL"
+              echo "INGRESS_ADDRESS=$EXTERNAL" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Timed out waiting for external address"
+          exit 1
+
+      # ── Helm: cert-manager ──────────────────────────────────────────────────
+      - name: Install cert-manager
+        run: |
+          status=$(helm status cert-manager -n cert-manager 2>/dev/null | grep STATUS | awk '{print $2}' || true)
+          if [ "$status" = "failed" ] || [ "$status" = "pending-install" ] || [ "$status" = "pending-upgrade" ]; then
+            helm uninstall cert-manager -n cert-manager --wait 2>/dev/null || true
+          fi
+          helm repo add jetstack https://charts.jetstack.io
+          helm repo update
+          helm upgrade --install cert-manager jetstack/cert-manager \
+            --namespace cert-manager --create-namespace \
+            --set installCRDs=true --wait --timeout 300s
+          kubectl wait --for=condition=Available \
+            deployment/cert-manager-webhook -n cert-manager --timeout=180s
+
+      # ── Secrets ─────────────────────────────────────────────────────────────
+      - name: Create pull secrets and app secret
+        run: |
+          kubectl create namespace portfolio --dry-run=client -o yaml | kubectl apply -f -
+
+          # Docker Hub pull secret (used by all targets)
+          kubectl create secret docker-registry dockerhub-pull-secret \
+            --namespace portfolio \
+            --docker-server="https://index.docker.io/v1/" \
+            --docker-username="${{ secrets.DOCKERHUB_USERNAME }}" \
+            --docker-password="${{ secrets.DOCKERHUB_TOKEN }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          # Application secret
+          APP_SECRET_KEY=$(openssl rand -hex 32)
+          kubectl create secret generic portfolio-secret \
+            --namespace portfolio \
+            --from-literal=SECRET_KEY="$APP_SECRET_KEY" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Create ECR pull secret
+        if: matrix.target.registry == 'ecr'
+        run: |
+          ECR_PASSWORD=$(aws ecr get-login-password --region ${{ matrix.target.region }})
+          ECR_SERVER="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ matrix.target.region }}.amazonaws.com"
+          kubectl create secret docker-registry ecr-pull-secret \
+            --namespace portfolio \
+            --docker-server="$ECR_SERVER" \
+            --docker-username=AWS \
+            --docker-password="$ECR_PASSWORD" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      # ── Kustomize deploy ────────────────────────────────────────────────────
+      - name: Deploy with Kustomize
+        run: |
+          TAG=${{ steps.tag.outputs.tag }}
+          cd k8s/targets/${{ matrix.target.name }}
+          kustomize edit set image "ltyang/portfolio=ltyang/portfolio:${TAG}"
+          kustomize build . | kubectl apply -f -
+
+      - name: Verify rollout
+        run: |
+          kubectl rollout status deployment/portfolio -n portfolio --timeout=180s
+
+      # ── DNS ─────────────────────────────────────────────────────────────────
+      - name: Update Cloudflare DNS
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+        run: |
+          DOMAIN="orchidflow.io"
+          SUBDOMAIN="${{ matrix.target.dns_subdomain }}"
+          INGRESS_VALUE="${INGRESS_ADDRESS}"
+
+          # Determine record type
+          if echo "$INGRESS_VALUE" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+            RECORD_TYPE="A"
+          else
+            RECORD_TYPE="CNAME"
+          fi
+
+          # Build record list
+          if [ -z "$SUBDOMAIN" ]; then
+            RECORDS="$DOMAIN www.$DOMAIN"
+          else
+            RECORDS="${SUBDOMAIN}.${DOMAIN}"
+          fi
+
+          for RECORD_NAME in $RECORDS; do
+            echo "Updating DNS: $RECORD_NAME -> $INGRESS_VALUE ($RECORD_TYPE)"
+
+            EXISTING=$(curl -s \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${RECORD_NAME}")
+            RECORD_ID=$(echo "$EXISTING" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          results = data.get('result', [])
+          print(results[0]['id'] if results else '')
+          " 2>/dev/null || true)
+
+            PAYLOAD="{\"type\":\"${RECORD_TYPE}\",\"name\":\"${RECORD_NAME}\",\"content\":\"${INGRESS_VALUE}\",\"ttl\":300,\"proxied\":false}"
+
+            if [ -n "$RECORD_ID" ]; then
+              curl -s -X PUT \
+                "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${RECORD_ID}" \
+                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+                -H "Content-Type: application/json" --data "$PAYLOAD"
+            else
+              curl -s -X POST \
+                "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records" \
+                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+                -H "Content-Type: application/json" --data "$PAYLOAD"
+            fi
+            echo " → done"
+          done
+
+      - name: Summary
+        run: |
+          echo "✅ Deployed to ${{ matrix.target.name }}"
+          echo "   Provider: ${{ matrix.target.provider }}"
+          echo "   Cluster:  ${{ matrix.target.cluster_name }}"
+          echo "   Image:    ${{ steps.tag.outputs.tag }}"

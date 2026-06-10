@@ -8,7 +8,7 @@ spec:
     - hosts:
         - orchidflow.io
         - www.orchidflow.io
-      secretName: portfolio-tls-azure
+      secretName: portfolio-tls-prod-azure-eastus
   rules:
     - host: orchidflow.io
       http:

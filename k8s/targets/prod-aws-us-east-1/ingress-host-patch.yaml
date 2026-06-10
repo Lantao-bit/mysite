@@ -7,7 +7,7 @@ spec:
   tls:
     - hosts:
         - aws.orchidflow.io
-      secretName: portfolio-tls-aws
+      secretName: portfolio-tls-prod-aws-us-east-1
   rules:
     - host: aws.orchidflow.io
       http:

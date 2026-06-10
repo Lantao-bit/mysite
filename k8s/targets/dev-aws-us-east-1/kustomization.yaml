@@ -23,9 +23,6 @@ patches:
           spec:
             containers:
               - name: portfolio
-                env:
-                  - name: FLASK_DEBUG
-                    value: "1"
                 resources:
                   requests:
                     memory: "32Mi"
@@ -35,5 +32,5 @@ patches:
                     cpu: "250m"
 images:
   - name: ltyang/portfolio
-    newName: 123456789.dkr.ecr.us-east-1.amazonaws.com/portfolio
-    newTag: BUILD_ID
+    newName: 712416941115.dkr.ecr.us-east-1.amazonaws.com/portfolio
+    newTag: latest

@@ -1,107 +1,107 @@
 # Deployment Calling Stack
 
-This document maps out which files are used at each stage of the deployment
-and teardown pipelines for AWS targets via GitHub Actions.
+This document maps out which files are used at each stage of the unified
+GitHub Actions deployment and teardown pipelines.
 
 ## File Roles
 
 | File | Role | Used at runtime? |
 |------|------|-----------------|
-| `deploy-targets.yml` | Documentation only — describes intended targets, triggers, and DNS config | **No** — not read by any pipeline |
-| `.github/workflows/deploy-aws.yml` | GitHub Actions workflow — defines jobs, triggers, and all deploy logic | **Yes** |
-| `.github/workflows/teardown-aws.yml` | GitHub Actions workflow — manual teardown | **Yes** |
-| `infra/targets/prod-aws-us-east-1/` | Terraform root module for prod | **Yes** — during `terraform apply/destroy` |
-| `infra/targets/dev-aws-us-east-1/` | Terraform root module for dev | **Yes** — during `terraform apply/destroy` |
-| `infra/modules/aws/` | Shared Terraform module (VPC, EKS, ECR, EBS CSI) | **Yes** — referenced by target modules |
-| `k8s/targets/prod-aws-us-east-1/` | Kustomize overlay for prod K8s manifests | **Yes** — during `kustomize build` |
-| `k8s/targets/dev-aws-us-east-1/` | Kustomize overlay for dev K8s manifests | **Yes** — during `kustomize build` |
-| `k8s/base/` | Base K8s manifests (Deployment, Service, PVC, Ingress) | **Yes** — composed by Kustomize |
-| `k8s/providers/aws/` | AWS-specific patches (StorageClass, PVC) | **Yes** — composed by Kustomize |
-| `k8s/environments/dev/` | Dev environment patches (replicas, resources) | **Yes** — composed by Kustomize |
-| `k8s/environments/prod/` | Prod environment patches | **Yes** — composed by Kustomize |
+| `deploy-targets.yml` | **Single source of truth** — defines all targets, read by pipeline at runtime | **Yes** |
+| `.github/workflows/deploy.yml` | Unified deploy workflow (test → build → fan-out) | **Yes** |
+| `.github/workflows/teardown.yml` | Unified teardown workflow (manual dispatch) | **Yes** |
+| `infra/targets/{name}/` | Terraform root module per target | **Yes** — during `terraform apply/destroy` |
+| `infra/modules/aws/` | Shared AWS Terraform module (VPC, EKS, ECR, EBS CSI) | **Yes** |
+| `infra/modules/azure/` | Shared Azure Terraform module (RG, AKS) | **Yes** |
+| `k8s/targets/{name}/` | Kustomize overlay per target | **Yes** — during `kustomize build` |
+| `k8s/base/` | Base K8s manifests (Deployment, Service, PVC, Ingress, ClusterIssuer) | **Yes** |
+| `k8s/providers/aws/` | AWS-specific patches (StorageClass, PVC) | **Yes** |
+| `k8s/providers/azure/` | Azure-specific patches (StorageClass, PVC, Ingress annotations) | **Yes** |
 
-## Deploy Pipeline Flow (`.github/workflows/deploy-aws.yml`)
+## Deploy Pipeline Flow (`.github/workflows/deploy.yml`)
 
 ```
-Push to main ──────────────────────────► deploy-dev job
-Push to release/* or v* tag ───────────► deploy-prod job
-Manual dispatch (select target) ───────► deploy-dev OR deploy-prod job
+┌─────────────────────────────────────────────────────────────────────┐
+│ Trigger: push to main/release/*/v* tag, or manual dispatch          │
+└─────────────────────┬───────────────────────────────────────────────┘
+                      ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│ setup: Parse deploy-targets.yml → build matrix of enabled targets   │
+└─────────────────────┬───────────────────────────────────────────────┘
+                      ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│ test: Run pytest (once)                                             │
+└─────────────────────┬───────────────────────────────────────────────┘
+                      ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│ build: Docker build → push to Docker Hub + ECR (once)               │
+└─────────────────────┬───────────────────────────────────────────────┘
+                      ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│ deploy (fan-out, parallel per target):                              │
+│  ┌─────────────────────┐  ┌─────────────────────┐                  │
+│  │ prod-azure-eastus   │  │ prod-aws-us-east-1  │  ...             │
+│  │  1. Credentials     │  │  1. Credentials     │                  │
+│  │  2. Terraform Apply │  │  2. Terraform Apply │                  │
+│  │  3. kubectl config  │  │  3. kubectl config  │                  │
+│  │  4. ingress-nginx   │  │  4. ingress-nginx   │                  │
+│  │  5. cert-manager    │  │  5. cert-manager    │                  │
+│  │  6. Pull secrets    │  │  6. Pull secrets    │                  │
+│  │  7. Kustomize deploy│  │  7. Kustomize deploy│                  │
+│  │  8. Verify rollout  │  │  8. Verify rollout  │                  │
+│  │  9. Cloudflare DNS  │  │  9. Cloudflare DNS  │                  │
+│  └─────────────────────┘  └─────────────────────┘                  │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Job: deploy-dev
+## Target Selection Logic
+
+The `setup` job reads `deploy-targets.yml` and matches targets based on:
+
+| Trigger | Which targets run |
+|---------|-------------------|
+| Push to `main` | Targets with `branches: [main]` in trigger |
+| Push to `release/*` | Targets with `branches: [release/*]` |
+| Push tag `v*` | Targets with `tags: [v*]` |
+| Manual dispatch (specific target) | Only the named target |
+| Manual dispatch (empty target) | All enabled targets |
+
+Only targets with `enabled: true` are included.
+
+## Teardown Pipeline Flow (`.github/workflows/teardown.yml`)
 
 ```
-1. Checkout code
-2. Determine image tag (git SHA)
-3. Configure AWS credentials          ← GitHub Secrets
-4. Setup Terraform
-5. Terraform Apply                     ← infra/targets/dev-aws-us-east-1/
-   └── module source                   ← infra/modules/aws/
-       ├── main.tf (VPC, subnets, NAT, routes)
-       ├── eks.tf (EKS cluster, node group, OIDC, EBS CSI)
-       └── ecr.tf (data source only, create_ecr=false)
-6. Configure kubectl                   ← portfolio-eks-dev cluster
-7. Install ingress-nginx (Helm)        ← ingress-nginx chart
-8. Wait for Load Balancer              ← AWS ELB provisioning
-9. Install cert-manager (Helm)         ← jetstack/cert-manager chart
-10. Create pull secrets                ← dockerhub-pull-secret, ecr-pull-secret, portfolio-secret
-11. Deploy with Kustomize              ← k8s/targets/dev-aws-us-east-1/
-    └── kustomization.yaml composes:
-        ├── k8s/base/                  (deployment, service, pvc, ingress)
-        ├── k8s/providers/aws/         (storageclass, pvc-patch)
-        └── k8s/environments/dev/      (replica count, resource limits)
-12. Verify rollout                     ← kubectl rollout status
-13. Update Cloudflare DNS              ← dev-aws.orchidflow.io → ELB hostname
+Manual dispatch → select target name + type "destroy"
+  1. Resolve target metadata from deploy-targets.yml
+  2. Configure provider credentials
+  3. Remove Cloudflare DNS records
+  4. Connect to cluster → delete LB services → wait for ENI release
+  5. Clean up orphaned AWS Load Balancers (AWS only)
+  6. Terraform destroy (optionally preserving ECR)
 ```
 
-### Job: deploy-prod
+## GitHub Secrets Required
 
-Same flow as deploy-dev, but uses:
-- `infra/targets/prod-aws-us-east-1/` (Terraform)
-- `portfolio-eks` cluster
-- `k8s/targets/prod-aws-us-east-1/` (Kustomize)
-- DNS: `aws.orchidflow.io`
+| Secret | Used for |
+|--------|----------|
+| `AWS_ACCESS_KEY_ID` | AWS IAM access |
+| `AWS_SECRET_ACCESS_KEY` | AWS IAM access |
+| `AWS_ACCOUNT_ID` | ECR registry URL |
+| `AZURE_CLIENT_ID` | Azure Service Principal |
+| `AZURE_CLIENT_SECRET` | Azure Service Principal |
+| `AZURE_SUBSCRIPTION_ID` | Azure subscription |
+| `AZURE_TENANT_ID` | Azure AD tenant |
+| `DOCKERHUB_USERNAME` | Docker Hub push/pull |
+| `DOCKERHUB_TOKEN` | Docker Hub auth |
+| `CLOUDFLARE_API_TOKEN` | DNS management |
+| `CLOUDFLARE_ZONE_ID` | DNS zone for orchidflow.io |
 
-## Teardown Pipeline Flow (`.github/workflows/teardown-aws.yml`)
+## Adding a New Target
 
-```
-Manual dispatch only (must type "destroy" to confirm)
-```
+1. Add entry to `deploy-targets.yml`
+2. Run `python scripts/generate-targets.py`
+3. Review generated files in `infra/targets/{name}/` and `k8s/targets/{name}/`
+4. Commit and push — the pipeline picks it up automatically
 
-```
-1. Validate confirmation
-2. Configure AWS credentials
-3. Remove Cloudflare DNS record        ← aws.orchidflow.io or dev-aws.orchidflow.io
-4. Clean up K8s LoadBalancers          ← kubectl delete svc (releases AWS ELBs)
-5. Setup Terraform
-6. Clean up orphaned Load Balancers    ← AWS API (catches ELBs missed by kubectl)
-7. Terraform Destroy                   ← infra/targets/{target}/
-   └── Optionally preserves ECR repo (--target flag excludes ECR resources)
-```
-
-## What Controls Which Target Gets Deployed
-
-| Decision | Controlled by |
-|----------|---------------|
-| Which job runs (dev vs prod) | `if:` conditions in workflow YAML (branch/tag matching) |
-| Which infrastructure is created | `working-directory` in Terraform steps (points to target folder) |
-| Which K8s manifests are applied | `cd k8s/targets/{target}` in Kustomize step |
-| Which DNS record is updated | Hardcoded in the workflow job (`aws.orchidflow.io` vs `dev-aws.orchidflow.io`) |
-| Which cluster to connect to | `CLUSTER_NAME_PROD` / `CLUSTER_NAME_DEV` env vars |
-
-## GitHub Environments (prod-aws, dev-aws)
-
-These are **labels** in GitHub, not infrastructure selectors. They provide:
-- Deployment history view in the GitHub UI
-- Optional protection rules (required reviewers for prod)
-- Environment-scoped secrets (if needed)
-
-They do NOT control what gets deployed — the workflow logic does that.
-
-## deploy-targets.yml
-
-Currently serves as **documentation only**. It describes the intended
-multi-cloud architecture and target registry but is not parsed by any
-automation. The original design envisioned a dynamic pipeline that reads
-this file and fans out, but the current GitHub Actions implementation uses
-hardcoded job definitions instead.
+The generator derives: cluster_name, resource_group, registry, VPC CIDR,
+Terraform files, K8s Kustomize overlays — all from the target name and provider.
