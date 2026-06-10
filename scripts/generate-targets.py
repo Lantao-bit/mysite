@@ -78,6 +78,7 @@ def generate_terraform_aws(target):
 
   region       = "{region}"
   cluster_name = "{cluster_name}"
+  environment  = "{name}"
   project_name = "portfolio"
   vpc_cidr     = "{target.get('_vpc_cidr', '10.1.0.0/16')}"
   instance_type = "t3.medium"
@@ -140,6 +141,7 @@ def generate_terraform_azure(target):
   location            = "{region}"
   resource_group_name = "{resource_group}"
   aks_cluster_name    = "{cluster_name}"
+  target_name         = "{name}"
   project_name        = "portfolio"
   kubernetes_version  = "1.34"
 }}

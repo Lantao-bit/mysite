@@ -3,8 +3,9 @@ resource "azurerm_resource_group" "portfolio" {
   location = var.location
 
   tags = {
-    environment = var.environment
-    project     = var.project_name
+    Target    = var.target_name
+    Project   = var.project_name
+    ManagedBy = "terraform"
   }
 }
 
@@ -36,7 +37,8 @@ resource "azurerm_kubernetes_cluster" "portfolio" {
   http_application_routing_enabled = var.enable_http_app_routing
 
   tags = {
-    environment = var.environment
-    project     = var.project_name
+    Target    = var.target_name
+    Project   = var.project_name
+    ManagedBy = "terraform"
   }
 }

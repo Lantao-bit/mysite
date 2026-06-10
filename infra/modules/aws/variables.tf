@@ -9,7 +9,7 @@ variable "cluster_name" {
 }
 
 variable "environment" {
-  description = "Environment tag (dev, qa, prod)"
+  description = "Deploy target name (used for tagging all resources)"
   type        = string
 }
 

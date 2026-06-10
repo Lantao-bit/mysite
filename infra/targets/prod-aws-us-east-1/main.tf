@@ -3,6 +3,7 @@ module "aws" {
 
   region       = "us-east-1"
   cluster_name = "portfolio-prod-aws-us-east-1"
+  environment  = "prod-aws-us-east-1"
   project_name = "portfolio"
   vpc_cidr     = "10.1.0.0/16"
   instance_type = "t3.medium"

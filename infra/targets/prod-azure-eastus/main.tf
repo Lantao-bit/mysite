@@ -4,6 +4,7 @@ module "azure" {
   location            = "eastus"
   resource_group_name = "portfolio-rg-prod-azure-eastus"
   aks_cluster_name    = "portfolio-prod-azure-eastus"
+  target_name         = "prod-azure-eastus"
   project_name        = "portfolio"
   kubernetes_version  = "1.34"
 }

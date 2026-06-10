@@ -74,10 +74,9 @@ variable "network_plugin" {
   description = "AKS network plugin (kubenet or azure)"
 }
 
-variable "environment" {
+variable "target_name" {
   type        = string
-  default     = "dev"
-  description = "Environment tag value for resource tagging"
+  description = "Deploy target name (used for tagging all resources)"
 }
 
 variable "project_name" {
