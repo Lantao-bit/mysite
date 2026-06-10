@@ -42,7 +42,7 @@ targets:
       tags: [v*]
 
   - name: dev-aws-us-east-1
-    enabled: false
+    enabled: true
     provider: aws
     region: us-east-1
     github_environment: ""
