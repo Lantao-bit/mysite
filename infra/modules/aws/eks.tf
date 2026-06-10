@@ -152,7 +152,8 @@ resource "aws_eks_node_group" "main" {
   }
 
   tags = {
-    Name = "${var.cluster_name}-nodes"
+    Name   = "${var.cluster_name}-nodes"
+    Target = var.environment
   }
 
   depends_on = [
