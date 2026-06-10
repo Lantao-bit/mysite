@@ -45,7 +45,7 @@ targets:
     enabled: true
     provider: aws
     region: us-east-1
-    github_environment: ""
+    github_environment: "non-prod"
     dns_subdomain: dev-aws
     replicas: 1
     resources:
