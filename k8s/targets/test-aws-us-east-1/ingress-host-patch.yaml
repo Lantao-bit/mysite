@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: portfolio-ingress
+  namespace: portfolio
+spec:
+  tls:
+    - hosts:
+        - test-aws.orchidflow.io
+      secretName: portfolio-tls-test-aws-us-east-1
+  rules:
+    - host: test-aws.orchidflow.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: portfolio-service
+                port:
+                  number: 5000

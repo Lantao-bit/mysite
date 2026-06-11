@@ -10,7 +10,7 @@
 
 targets:
   - name: prod-azure-eastus
-    enabled: true
+    enabled: false
     provider: azure
     region: eastus
     github_environment: production
@@ -26,7 +26,7 @@ targets:
       tags: [v*]
 
   - name: prod-aws-us-east-1
-    enabled: true
+    enabled: false
     provider: aws
     region: us-east-1
     github_environment: production
@@ -47,6 +47,36 @@ targets:
     region: us-east-1
     github_environment: "non-prod"
     dns_subdomain: dev-aws
+    replicas: 1
+    resources:
+      cpu_request: 50m
+      cpu_limit: 250m
+      memory_request: 32Mi
+      memory_limit: 128Mi
+    trigger:
+      branches: [main]
+
+  - name: test-aws-us-east-1
+    enabled: true
+    provider: aws
+    region: us-east-1
+    github_environment: "non-prod"
+    dns_subdomain: test-aws
+    replicas: 1
+    resources:
+      cpu_request: 50m
+      cpu_limit: 250m
+      memory_request: 32Mi
+      memory_limit: 128Mi
+    trigger:
+      branches: [main]
+
+  - name: dev-aws-ap-southeast-1
+    enabled: true
+    provider: aws
+    region: ap-southeast-1
+    github_environment: "non-prod"
+    dns_subdomain: dev-apse-aws
     replicas: 1
     resources:
       cpu_request: 50m
