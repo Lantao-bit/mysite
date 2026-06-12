@@ -6,10 +6,10 @@ metadata:
 spec:
   tls:
     - hosts:
-        - dev-apse-aws.orchidflow.io
+        - demo.orchidflow.io
       secretName: portfolio-tls-dev-aws-ap-southeast-1
   rules:
-    - host: dev-apse-aws.orchidflow.io
+    - host: demo.orchidflow.io
       http:
         paths:
           - path: /

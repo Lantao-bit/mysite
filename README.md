@@ -2,7 +2,7 @@
 
 A single-page personal portfolio website built with Flask, SQLAlchemy, and Bootstrap 5. Showcases professional information, project portfolio, and a visitor comment system with user authentication.
 
-**Live:** https://orchidflow.io
+**Live:** https://orchidflow.io (Azure) | https://aws.orchidflow.io (AWS)
 
 ## Features
 
@@ -13,6 +13,7 @@ A single-page personal portfolio website built with Flask, SQLAlchemy, and Boots
 - Comments displayed newest-first in a sidebar layout
 - SQLite database with Flask-Migrate for schema versioning
 - Admin panel for portfolio entry management (CRUD + JSON import/export)
+- Multi-cloud deployment (Azure AKS + AWS EKS) via unified GitHub Actions pipeline
 
 ## Tech Stack
 
@@ -20,10 +21,10 @@ A single-page personal portfolio website built with Flask, SQLAlchemy, and Boots
 - **Frontend:** Bootstrap 5 (CDN), Jinja2 templates
 - **Database:** SQLite with Flask-Migrate / Alembic
 - **Testing:** pytest, Hypothesis (property-based testing)
-- **Infrastructure:** Terraform, AKS, Docker, Helm
-- **CI/CD:** Azure Pipelines (Test → Terraform → Infra Setup → Build → Deploy)
-- **DNS/TLS:** Cloudflare DNS (auto-updated), Let's Encrypt via cert-manager
-- **Container Registry:** Docker Hub
+- **Infrastructure:** Terraform (AWS EKS + Azure AKS), Docker, Helm, Kustomize
+- **CI/CD:** GitHub Actions (unified multi-cloud pipeline with dynamic matrix)
+- **DNS/TLS:** Cloudflare DNS (auto-updated per target), Let's Encrypt via cert-manager
+- **Container Registries:** Docker Hub + AWS ECR
 
 ## Running the App
 
@@ -76,7 +77,7 @@ docker compose up -d
 # View logs
 docker compose logs -f
 
-# Stop
+# Stop and remove (add -v to also remove the database volume)
 docker compose down
 ```
 
@@ -118,43 +119,29 @@ App is available at http://localhost:8080.
 
 ### Option 4: Kubernetes (Local — Docker Desktop)
 
-Best for testing the full K8s deployment locally before pushing to AKS.
+Best for testing the full K8s deployment locally before pushing to cloud.
 
 **Prerequisites:** Docker Desktop with Kubernetes enabled (Settings → Kubernetes → Enable Kubernetes)
 
-**Quick deploy using the convenience script:**
-
-```bash
-cd k8s
-chmod +x deploy.sh
-./deploy.sh
-```
-
-**Manual step-by-step:**
-
 ```bash
 # Build the image locally
-docker build -t portfolio:latest .
+docker build -t ltyang/portfolio:latest .
 
-# Apply manifests in order
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/secret.yaml
-kubectl apply -f k8s/pvc.yaml
-kubectl apply -f k8s/deployment.yaml
-kubectl apply -f k8s/service.yaml
+# Apply manifests using Kustomize (choose a target)
+kubectl apply -k k8s/targets/prod-azure-eastus/
 
 # Wait for the pod to be ready
 kubectl -n portfolio rollout status deployment/portfolio --timeout=60s
 ```
 
-App is available at http://localhost (port 80) via the LoadBalancer service.
+App is available at http://localhost via the ingress or NodePort service.
 
 **Useful commands:**
 
 ```bash
-kubectl -n portfolio get pods              # check pod status
-kubectl -n portfolio logs -f deploy/portfolio  # view logs
-kubectl -n portfolio describe pod <pod-name>   # debug a pod
+kubectl -n portfolio get pods                    # check pod status
+kubectl -n portfolio logs -f deploy/portfolio    # view logs
+kubectl -n portfolio describe pod <pod-name>     # debug a pod
 ```
 
 **Tear down:**
@@ -163,65 +150,102 @@ kubectl -n portfolio describe pod <pod-name>   # debug a pod
 kubectl delete namespace portfolio
 ```
 
-> **Important:** Make sure your kubectl context is set to `docker-desktop` before running tear-down commands. If your context is pointing to AKS (`portfolio-aks-admin`), this will delete the production deployment. Check with `kubectl config current-context` and switch with `kubectl config use-context docker-desktop`. Use 'kubectl config get-contexts' or 'kubectl config get-contexts -o name' to list all available contexts.
-
-> **Note:** The K8s deployment.yaml uses `ltyang/portfolio:__IMAGE_TAG__` as the image reference. For local K8s, update the image field to `portfolio:latest` and set `imagePullPolicy: Never`.
+> **Important:** Make sure your kubectl context is set to `docker-desktop` before running commands. Check with `kubectl config current-context` and switch with `kubectl config use-context docker-desktop`.
 
 ---
 
-## Production Deployment (AKS + Terraform + Cloudflare)
+## Production Deployment (Multi-Cloud via GitHub Actions)
 
-The production environment is fully automated via Azure Pipelines.
+The production environment is fully automated via a unified GitHub Actions workflow that deploys to multiple cloud targets in parallel.
 
 ### Architecture
 
 ```
-User → Cloudflare DNS → Azure Load Balancer → NGINX Ingress Controller → Flask App (AKS Pod)
-                                                      ↓
-                                              cert-manager → Let's Encrypt (auto TLS)
+User → Cloudflare DNS → Load Balancer → NGINX Ingress Controller → Flask App (K8s Pod)
+                                                  ↓
+                                          cert-manager → Let's Encrypt (auto TLS)
 ```
 
-### CI/CD Pipeline Stages
+Targets:
+- `orchidflow.io` → Azure AKS (eastus)
+- `aws.orchidflow.io` → AWS EKS (us-east-1)
 
-The `azure-pipelines.yml` pipeline runs automatically on push to `main`:
+### CI/CD Pipeline (GitHub Actions)
 
-1. **Test** — Runs pytest (unit + property-based tests)
-2. **Terraform Plan** — Plans infrastructure changes
-3. **Terraform Apply** — Creates/updates AKS cluster, VNet, subnet
-4. **Infra Setup** — Installs NGINX Ingress Controller + cert-manager via Helm, updates Cloudflare DNS with the new ingress IP
-5. **Build & Push** — Builds linux/amd64 Docker image, pushes to Docker Hub
-6. **Deploy** — Applies K8s manifests to AKS
+The `.github/workflows/deploy.yml` workflow runs on push to `release/*`, `v*` tags, or manual dispatch:
+
+```
+setup (parse deploy-targets.yml → build matrix)
+  → test (pytest, once)
+    → build (Docker image → Docker Hub + ECR, once)
+      → deploy (fan-out per target, parallel):
+          - Terraform apply (provision infra)
+          - Helm: ingress-nginx + cert-manager
+          - Kustomize: build + apply manifests
+          - Verify rollout
+          - Update Cloudflare DNS
+```
+
+### Configuration-Driven Targets
+
+All deployment targets are defined in `deploy-targets.yml`. Adding a new target:
+
+```bash
+# 1. Edit deploy-targets.yml
+# 2. Regenerate Terraform + K8s files
+python scripts/generate-targets.py
+# 3. Commit and push
+```
 
 ### Infrastructure (Terraform)
 
-Managed resources in `terraform/`:
-- Resource group, VNet, subnet
-- AKS cluster (1 node, Standard_dc2ads_v5)
+```
+infra/
+├── modules/
+│   ├── aws/       # VPC, EKS, ECR, EBS CSI driver
+│   └── azure/     # Resource Group, AKS
+└── targets/       # Generated thin root modules per target
+    ├── prod-azure-eastus/
+    ├── prod-aws-us-east-1/
+    └── dev-aws-us-east-1/
+```
 
 ### DNS & TLS
 
-- **Cloudflare** manages DNS for `orchidflow.io` (auto-updated by pipeline)
+- **Cloudflare** manages DNS for `orchidflow.io` (auto-updated per target by pipeline)
 - **cert-manager** + Let's Encrypt provides trusted HTTPS certificates (auto-renewed)
 - DNS records are set to "DNS only" (no Cloudflare proxy) for cert-manager HTTP-01 challenges
 
-### Pipeline Variables (Azure DevOps)
+### GitHub Secrets Required
 
-| Variable | Secret | Purpose |
-|----------|--------|---------|
-| ARM_CLIENT_ID | No | Azure service principal |
-| ARM_CLIENT_SECRET | Yes | Azure service principal |
-| ARM_SUBSCRIPTION_ID | No | Azure subscription |
-| ARM_TENANT_ID | No | Azure tenant |
-| DOCKERHUB_USERNAME | No | Docker Hub login |
-| DOCKERHUB_TOKEN | Yes | Docker Hub access token |
-| CLOUDFLARE_API_TOKEN | Yes | Cloudflare DNS API |
-| CLOUDFLARE_ZONE_ID | No | Cloudflare zone for orchidflow.io |
+| Secret | Purpose |
+|--------|---------|
+| `AWS_ACCESS_KEY_ID` | AWS IAM access |
+| `AWS_SECRET_ACCESS_KEY` | AWS IAM access |
+| `AWS_ACCOUNT_ID` | ECR registry URL |
+| `AZURE_CLIENT_ID` | Azure Service Principal |
+| `AZURE_CLIENT_SECRET` | Azure Service Principal |
+| `AZURE_SUBSCRIPTION_ID` | Azure subscription |
+| `AZURE_TENANT_ID` | Azure AD tenant |
+| `DOCKERHUB_USERNAME` | Docker Hub push/pull |
+| `DOCKERHUB_TOKEN` | Docker Hub auth |
+| `CLOUDFLARE_API_TOKEN` | DNS management |
+| `CLOUDFLARE_ZONE_ID` | DNS zone for orchidflow.io |
+
+### Teardown
+
+Infrastructure teardown is manual-only via `.github/workflows/teardown.yml`:
+
+1. Go to **Actions → Teardown → Run workflow**
+2. Enter the target name (e.g., `prod-aws-us-east-1`)
+3. Type `destroy` to confirm
+4. Optionally preserve container registry
 
 ### Cost Management
 
-- **Stop cluster** (keep resources, stop billing for compute): `az aks stop --name portfolio-aks --resource-group portfolio-rg`
-- **Start cluster**: `az aks start --name portfolio-aks --resource-group portfolio-rg`
-- **Full teardown**: `terraform destroy` (pipeline will recreate everything on next push)
+- **Stop AKS cluster** (keep resources, stop billing): `az aks stop --name portfolio-prod-azure-eastus --resource-group portfolio-rg-prod-azure-eastus`
+- **Start AKS cluster**: `az aks start --name portfolio-prod-azure-eastus --resource-group portfolio-rg-prod-azure-eastus`
+- **Full teardown**: Use the teardown workflow (pipeline will recreate everything on next deploy)
 
 ---
 
@@ -239,8 +263,8 @@ python3 -m pytest tests/test_property_*.py -v
 # Run a specific test file
 python3 -m pytest tests/test_db_and_auth.py -v
 
-# Run with short output
-python3 -m pytest tests/
+# Run with coverage
+python3 -m pytest tests/ --cov=portfolio --cov-report=term-missing
 ```
 
 The test suite includes:
@@ -272,39 +296,36 @@ flask db upgrade
 ## Project Structure
 
 ```
-portfolio/
-├── app.py              # Flask app factory (with ProxyFix for HTTPS)
-├── models.py           # SQLAlchemy models (User, Project, Comment)
-├── db.py               # Data access layer (returns dicts)
-├── auth.py             # Authentication logic
-├── routes.py           # Route handlers
-├── forms.py            # WTForms definitions
-├── templates/          # Jinja2 templates
-├── static/             # CSS and images
-└── requirements.txt    # Python dependencies
-tests/
-├── test_db_and_auth.py           # Unit tests
-├── test_admin_routes.py          # Admin route tests
-├── test_property_admin_auth.py   # Property-based auth tests
-├── test_property_export_import.py # Property-based export/import tests
-└── test_property_project_crud.py # Property-based CRUD tests
+portfolio/                          # Flask application
+├── app.py                          # App factory (ProxyFix for HTTPS)
+├── models.py                       # SQLAlchemy models (User, Project, Comment)
+├── db.py                           # Data access layer (returns dicts)
+├── auth.py                         # Authentication logic
+├── routes.py                       # Route handlers
+├── forms.py                        # WTForms definitions
+├── templates/                      # Jinja2 templates
+├── static/                         # CSS and images
+└── requirements.txt                # Python dependencies
+tests/                              # pytest + Hypothesis test suite
+scripts/
+└── generate-targets.py             # Generate Terraform/K8s files from config
+infra/
+├── modules/
+│   ├── aws/                        # Shared AWS module (VPC, EKS, ECR, EBS CSI)
+│   └── azure/                      # Shared Azure module (RG, AKS)
+└── targets/                        # Per-target root modules (generated)
 k8s/
-├── deploy.sh           # Local K8s deployment script
-├── ingress/            # Ingress + cert-manager manifests
-│   ├── setup-ingress.sh
-│   ├── cert-manager-issuer.yaml
-│   └── ingress.yaml
-├── namespace.yaml
-├── secret.yaml
-├── pvc.yaml
-├── deployment.yaml
-└── service.yaml
-terraform/
-├── main.tf             # AKS cluster, VNet, subnet
-├── variables.tf        # Configurable parameters
-├── outputs.tf          # Useful output values
-├── backend.tf          # Remote state configuration
-└── terraform.tfvars.example
+├── base/                           # Shared K8s manifests
+├── providers/
+│   ├── aws/                        # AWS patches (EBS StorageClass, NLB)
+│   └── azure/                      # Azure patches (managed-premium, LB)
+├── environments/                   # Environment patches (replicas, resources)
+└── targets/                        # Per-target overlays (generated)
+.github/workflows/
+├── deploy.yml                      # Unified multi-cloud deploy
+└── teardown.yml                    # Manual teardown
+deploy-targets.yml                  # Single source of truth for all targets
+docs/                               # Architecture and deployment docs
 ```
 
 ## Deployment (PythonAnywhere)
