@@ -307,15 +307,22 @@ jobs:
           terraform init -input=false
           terraform apply -input=false -auto-approve
         env:
-          # Azure provider needs ARM_* vars; AWS provider uses credentials from configure-aws-credentials step
+          # S3 backend credentials (needed by all targets using S3 state: aws, sap, alicloud)
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: us-east-1
+          # Azure provider needs ARM_* vars
           ARM_CLIENT_ID: ${{ matrix.target.provider == 'azure' && secrets.AZURE_CLIENT_ID || '' }}
           ARM_CLIENT_SECRET: ${{ matrix.target.provider == 'azure' && secrets.AZURE_CLIENT_SECRET || '' }}
           ARM_SUBSCRIPTION_ID: ${{ matrix.target.provider == 'azure' && secrets.AZURE_SUBSCRIPTION_ID || '' }}
           ARM_TENANT_ID: ${{ matrix.target.provider == 'azure' && secrets.AZURE_TENANT_ID || '' }}
+          # GCP
           GCP_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+          # Alibaba
           ALICLOUD_ACCESS_KEY: ${{ matrix.target.provider == 'alicloud' && secrets.ALICLOUD_ACCESS_KEY || '' }}
           ALICLOUD_SECRET_KEY: ${{ matrix.target.provider == 'alicloud' && secrets.ALICLOUD_SECRET_KEY || '' }}
           ALICLOUD_REGION: ${{ matrix.target.provider == 'alicloud' && matrix.target.region || '' }}
+          # SAP BTP
           BTP_GLOBALACCOUNT: ${{ matrix.target.provider == 'sap' && secrets.SAP_BTP_GLOBALACCOUNT || '' }}
           BTP_CLI_SERVER_URL: ${{ matrix.target.provider == 'sap' && secrets.SAP_BTP_CLI_SERVER_URL || '' }}
           BTP_CLIENT_ID: ${{ matrix.target.provider == 'sap' && secrets.SAP_BTP_CLIENT_ID || '' }}
