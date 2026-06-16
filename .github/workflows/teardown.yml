@@ -256,6 +256,8 @@ jobs:
           BTP_GLOBALACCOUNT: ${{ secrets.SAP_BTP_GLOBALACCOUNT }}
           BTP_USERNAME: ${{ secrets.SAP_BTP_USERNAME }}
           BTP_PASSWORD: ${{ secrets.SAP_BTP_PASSWORD }}
+          TF_VAR_subaccount_id: ${{ secrets.SAP_BTP_SUBACCOUNT_ID }}
+          TF_VAR_globalaccount: ${{ secrets.SAP_BTP_GLOBALACCOUNT }}
 
       - name: Summary
         run: |

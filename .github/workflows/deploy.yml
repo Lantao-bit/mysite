@@ -325,6 +325,8 @@ jobs:
           BTP_GLOBALACCOUNT: ${{ matrix.target.provider == 'sap' && secrets.SAP_BTP_GLOBALACCOUNT || '' }}
           BTP_USERNAME: ${{ matrix.target.provider == 'sap' && secrets.SAP_BTP_USERNAME || '' }}
           BTP_PASSWORD: ${{ matrix.target.provider == 'sap' && secrets.SAP_BTP_PASSWORD || '' }}
+          TF_VAR_subaccount_id: ${{ matrix.target.provider == 'sap' && secrets.SAP_BTP_SUBACCOUNT_ID || '' }}
+          TF_VAR_globalaccount: ${{ matrix.target.provider == 'sap' && secrets.SAP_BTP_GLOBALACCOUNT || '' }}
 
       # ── Cluster access ──────────────────────────────────────────────────────
       - name: Configure kubectl (AWS)

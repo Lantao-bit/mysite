@@ -16,7 +16,3 @@ output "cluster_endpoint" {
 output "cluster_name" {
   value = module.alicloud.cluster_name
 }
-
-output "acr_registry_url" {
-  value = module.alicloud.acr_registry_url
-}

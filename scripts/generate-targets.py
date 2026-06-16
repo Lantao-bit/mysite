@@ -259,8 +259,20 @@ def generate_terraform_sap(target):
   cluster_name   = "{cluster_name}"
   environment    = "{name}"
   project_name   = "portfolio"
-  subaccount_id  = "placeholder-subaccount-id"
-  globalaccount  = "placeholder-globalaccount"
+  subaccount_id  = var.subaccount_id
+  globalaccount  = var.globalaccount
+}}
+
+variable "subaccount_id" {{
+  description = "SAP BTP Subaccount ID (from SAP_BTP_SUBACCOUNT_ID env var)"
+  type        = string
+  default     = ""
+}}
+
+variable "globalaccount" {{
+  description = "SAP BTP Global Account subdomain (from BTP_GLOBALACCOUNT env var)"
+  type        = string
+  default     = ""
 }}
 
 output "cluster_name" {{
@@ -320,10 +332,6 @@ output "cluster_endpoint" {{
 
 output "cluster_name" {{
   value = module.alicloud.cluster_name
-}}
-
-output "acr_registry_url" {{
-  value = module.alicloud.acr_registry_url
 }}
 '''
 
