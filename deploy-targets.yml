@@ -87,7 +87,7 @@ targets:
       branches: [main]
 
   - name: dev-gcp-asia-southeast1
-    enabled: false
+    enabled: true
     provider: gcp
     region: asia-southeast1
     github_environment: "non-prod"
@@ -102,7 +102,7 @@ targets:
       branches: [main]
 
   - name: dev-sap-ap21
-    enabled: false
+    enabled: true
     provider: sap
     region: ap21
     github_environment: "non-prod"
