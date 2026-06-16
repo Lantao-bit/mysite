@@ -9,9 +9,7 @@ terraform {
   }
 }
 
-# Authentication via service credentials (OAuth2 client credentials)
-# Environment variables: BTP_CLI_SERVER_URL, BTP_CLIENT_ID, BTP_CLIENT_SECRET
+# Authentication via BTP_USERNAME and BTP_PASSWORD environment variables
 provider "btp" {
-  globalaccount  = var.globalaccount
-  cli_server_url = var.cli_server_url
+  globalaccount = var.globalaccount
 }

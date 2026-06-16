@@ -85,9 +85,8 @@ jobs:
       - name: Configure SAP BTP credentials
         if: steps.target.outputs.provider == 'sap'
         run: |
-          echo "BTP_CLI_SERVER_URL=${{ secrets.SAP_BTP_CLI_SERVER_URL }}" >> "$GITHUB_ENV"
-          echo "BTP_CLIENT_ID=${{ secrets.SAP_BTP_CLIENT_ID }}" >> "$GITHUB_ENV"
-          echo "BTP_CLIENT_SECRET=${{ secrets.SAP_BTP_CLIENT_SECRET }}" >> "$GITHUB_ENV"
+          echo "BTP_USERNAME=${{ secrets.SAP_BTP_USERNAME }}" >> "$GITHUB_ENV"
+          echo "BTP_PASSWORD=${{ secrets.SAP_BTP_PASSWORD }}" >> "$GITHUB_ENV"
 
       - name: Configure Alibaba credentials
         if: steps.target.outputs.provider == 'alicloud'
@@ -255,9 +254,8 @@ jobs:
           ALICLOUD_SECRET_KEY: ${{ secrets.ALICLOUD_SECRET_KEY }}
           ALICLOUD_REGION: ${{ steps.target.outputs.region }}
           BTP_GLOBALACCOUNT: ${{ secrets.SAP_BTP_GLOBALACCOUNT }}
-          BTP_CLI_SERVER_URL: ${{ secrets.SAP_BTP_CLI_SERVER_URL }}
-          BTP_CLIENT_ID: ${{ secrets.SAP_BTP_CLIENT_ID }}
-          BTP_CLIENT_SECRET: ${{ secrets.SAP_BTP_CLIENT_SECRET }}
+          BTP_USERNAME: ${{ secrets.SAP_BTP_USERNAME }}
+          BTP_PASSWORD: ${{ secrets.SAP_BTP_PASSWORD }}
 
       - name: Summary
         run: |

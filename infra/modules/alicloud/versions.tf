@@ -11,12 +11,4 @@ terraform {
 
 provider "alicloud" {
   region = var.region
-
-  default_tags {
-    tags = {
-      Target    = var.environment
-      Project   = var.project_name
-      ManagedBy = "terraform"
-    }
-  }
 }

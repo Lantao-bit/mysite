@@ -284,9 +284,8 @@ jobs:
       - name: Configure SAP BTP credentials
         if: matrix.target.provider == 'sap'
         run: |
-          echo "BTP_CLI_SERVER_URL=${{ secrets.SAP_BTP_CLI_SERVER_URL }}" >> "$GITHUB_ENV"
-          echo "BTP_CLIENT_ID=${{ secrets.SAP_BTP_CLIENT_ID }}" >> "$GITHUB_ENV"
-          echo "BTP_CLIENT_SECRET=${{ secrets.SAP_BTP_CLIENT_SECRET }}" >> "$GITHUB_ENV"
+          echo "BTP_USERNAME=${{ secrets.SAP_BTP_USERNAME }}" >> "$GITHUB_ENV"
+          echo "BTP_PASSWORD=${{ secrets.SAP_BTP_PASSWORD }}" >> "$GITHUB_ENV"
 
       - name: Configure Alibaba credentials
         if: matrix.target.provider == 'alicloud'
@@ -324,9 +323,8 @@ jobs:
           ALICLOUD_REGION: ${{ matrix.target.provider == 'alicloud' && matrix.target.region || '' }}
           # SAP BTP
           BTP_GLOBALACCOUNT: ${{ matrix.target.provider == 'sap' && secrets.SAP_BTP_GLOBALACCOUNT || '' }}
-          BTP_CLI_SERVER_URL: ${{ matrix.target.provider == 'sap' && secrets.SAP_BTP_CLI_SERVER_URL || '' }}
-          BTP_CLIENT_ID: ${{ matrix.target.provider == 'sap' && secrets.SAP_BTP_CLIENT_ID || '' }}
-          BTP_CLIENT_SECRET: ${{ matrix.target.provider == 'sap' && secrets.SAP_BTP_CLIENT_SECRET || '' }}
+          BTP_USERNAME: ${{ matrix.target.provider == 'sap' && secrets.SAP_BTP_USERNAME || '' }}
+          BTP_PASSWORD: ${{ matrix.target.provider == 'sap' && secrets.SAP_BTP_PASSWORD || '' }}
 
       # ── Cluster access ──────────────────────────────────────────────────────
       - name: Configure kubectl (AWS)
