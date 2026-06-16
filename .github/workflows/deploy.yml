@@ -119,7 +119,13 @@ jobs:
               # Derive cluster_name and resource_group
               cluster_name = f'portfolio-{name}'
               resource_group = f'portfolio-rg-{name}' if provider == 'azure' else ''
-              registry = 'ecr' if provider == 'aws' else 'dockerhub'
+              registry = {
+                  'aws': 'ecr',
+                  'azure': 'dockerhub',
+                  'gcp': 'dockerhub',
+                  'sap': 'dockerhub',
+                  'alicloud': 'dockerhub'
+              }.get(provider, 'dockerhub')
 
               matrix.append({
                   'name': name,
@@ -269,6 +275,26 @@ jobs:
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
+      - name: Configure GCP credentials
+        if: matrix.target.provider == 'gcp'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure SAP BTP credentials
+        if: matrix.target.provider == 'sap'
+        run: |
+          echo "BTP_CLI_SERVER_URL=${{ secrets.SAP_BTP_CLI_SERVER_URL }}" >> "$GITHUB_ENV"
+          echo "BTP_CLIENT_ID=${{ secrets.SAP_BTP_CLIENT_ID }}" >> "$GITHUB_ENV"
+          echo "BTP_CLIENT_SECRET=${{ secrets.SAP_BTP_CLIENT_SECRET }}" >> "$GITHUB_ENV"
+
+      - name: Configure Alibaba credentials
+        if: matrix.target.provider == 'alicloud'
+        run: |
+          echo "ALICLOUD_ACCESS_KEY=${{ secrets.ALICLOUD_ACCESS_KEY }}" >> "$GITHUB_ENV"
+          echo "ALICLOUD_SECRET_KEY=${{ secrets.ALICLOUD_SECRET_KEY }}" >> "$GITHUB_ENV"
+          echo "ALICLOUD_REGION=${{ matrix.target.region }}" >> "$GITHUB_ENV"
+
       # ── Terraform ───────────────────────────────────────────────────────────
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -286,6 +312,14 @@ jobs:
           ARM_CLIENT_SECRET: ${{ matrix.target.provider == 'azure' && secrets.AZURE_CLIENT_SECRET || '' }}
           ARM_SUBSCRIPTION_ID: ${{ matrix.target.provider == 'azure' && secrets.AZURE_SUBSCRIPTION_ID || '' }}
           ARM_TENANT_ID: ${{ matrix.target.provider == 'azure' && secrets.AZURE_TENANT_ID || '' }}
+          GCP_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+          ALICLOUD_ACCESS_KEY: ${{ matrix.target.provider == 'alicloud' && secrets.ALICLOUD_ACCESS_KEY || '' }}
+          ALICLOUD_SECRET_KEY: ${{ matrix.target.provider == 'alicloud' && secrets.ALICLOUD_SECRET_KEY || '' }}
+          ALICLOUD_REGION: ${{ matrix.target.provider == 'alicloud' && matrix.target.region || '' }}
+          BTP_GLOBALACCOUNT: ${{ matrix.target.provider == 'sap' && secrets.SAP_BTP_GLOBALACCOUNT || '' }}
+          BTP_CLI_SERVER_URL: ${{ matrix.target.provider == 'sap' && secrets.SAP_BTP_CLI_SERVER_URL || '' }}
+          BTP_CLIENT_ID: ${{ matrix.target.provider == 'sap' && secrets.SAP_BTP_CLIENT_ID || '' }}
+          BTP_CLIENT_SECRET: ${{ matrix.target.provider == 'sap' && secrets.SAP_BTP_CLIENT_SECRET || '' }}
 
       # ── Cluster access ──────────────────────────────────────────────────────
       - name: Configure kubectl (AWS)
@@ -302,6 +336,40 @@ jobs:
             --resource-group ${{ matrix.target.resource_group }} \
             --name ${{ matrix.target.cluster_name }} \
             --overwrite-existing --admin
+
+      - name: Configure kubectl (GCP)
+        if: matrix.target.provider == 'gcp'
+        run: |
+          gcloud container clusters get-credentials ${{ matrix.target.cluster_name }} \
+            --region ${{ matrix.target.region }} \
+            --project ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Configure kubectl (SAP BTP)
+        if: matrix.target.provider == 'sap'
+        run: |
+          # Download kubeconfig from Terraform output
+          cd infra/targets/${{ matrix.target.name }}
+          KUBECONFIG_URL=$(terraform output -raw kubeconfig_url 2>/dev/null || true)
+          if [ -n "$KUBECONFIG_URL" ]; then
+            curl -s -o /tmp/kubeconfig "$KUBECONFIG_URL"
+            export KUBECONFIG=/tmp/kubeconfig
+            echo "KUBECONFIG=/tmp/kubeconfig" >> "$GITHUB_ENV"
+          fi
+
+      - name: Configure kubectl (Alibaba)
+        if: matrix.target.provider == 'alicloud'
+        run: |
+          # Install aliyun CLI
+          curl -sL https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz | tar xz -C /usr/local/bin/
+          # Get kubeconfig
+          aliyun cs GET /k8s/${{ matrix.target.cluster_name }}/user_config \
+            --access-key-id "$ALICLOUD_ACCESS_KEY" \
+            --access-key-secret "$ALICLOUD_SECRET_KEY" \
+            --region "${{ matrix.target.region }}" > /tmp/kubeconfig.json
+          # Extract and write kubeconfig
+          python3 -c "import json,sys;d=json.load(open('/tmp/kubeconfig.json'));open('/tmp/kubeconfig','w').write(d.get('config',''))"
+          export KUBECONFIG=/tmp/kubeconfig
+          echo "KUBECONFIG=/tmp/kubeconfig" >> "$GITHUB_ENV"
 
       # ── Helm: ingress-nginx ─────────────────────────────────────────────────
       - name: Install ingress-nginx

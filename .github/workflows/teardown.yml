@@ -76,6 +76,26 @@ jobs:
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
+      - name: Configure GCP credentials
+        if: steps.target.outputs.provider == 'gcp'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure SAP BTP credentials
+        if: steps.target.outputs.provider == 'sap'
+        run: |
+          echo "BTP_CLI_SERVER_URL=${{ secrets.SAP_BTP_CLI_SERVER_URL }}" >> "$GITHUB_ENV"
+          echo "BTP_CLIENT_ID=${{ secrets.SAP_BTP_CLIENT_ID }}" >> "$GITHUB_ENV"
+          echo "BTP_CLIENT_SECRET=${{ secrets.SAP_BTP_CLIENT_SECRET }}" >> "$GITHUB_ENV"
+
+      - name: Configure Alibaba credentials
+        if: steps.target.outputs.provider == 'alicloud'
+        run: |
+          echo "ALICLOUD_ACCESS_KEY=${{ secrets.ALICLOUD_ACCESS_KEY }}" >> "$GITHUB_ENV"
+          echo "ALICLOUD_SECRET_KEY=${{ secrets.ALICLOUD_SECRET_KEY }}" >> "$GITHUB_ENV"
+          echo "ALICLOUD_REGION=${{ steps.target.outputs.region }}" >> "$GITHUB_ENV"
+
       # ── DNS removal ─────────────────────────────────────────────────────────
       - name: Remove Cloudflare DNS record
         env:
@@ -142,6 +162,29 @@ jobs:
             echo "Cluster not reachable — proceeding with destroy."
           fi
 
+      - name: Clean up Kubernetes LoadBalancers (GCP)
+        if: steps.target.outputs.provider == 'gcp'
+        run: |
+          gcloud container clusters get-credentials "${{ steps.target.outputs.cluster_name }}" \
+            --region ${{ steps.target.outputs.region }} --project ${{ secrets.GCP_PROJECT_ID }} 2>/dev/null || true
+          kubectl delete svc --all -n ingress-nginx 2>/dev/null || true
+          kubectl delete svc --all -n portfolio 2>/dev/null || true
+          kubectl delete namespace ingress-nginx 2>/dev/null || true
+          sleep 60
+
+      - name: Clean up Kubernetes LoadBalancers (SAP)
+        if: steps.target.outputs.provider == 'sap'
+        run: |
+          echo "SAP BTP Kyma — LB cleanup handled by platform on teardown."
+
+      - name: Clean up Kubernetes LoadBalancers (Alibaba)
+        if: steps.target.outputs.provider == 'alicloud'
+        run: |
+          echo "Alibaba Cloud — attempting kubectl cleanup..."
+          # Would need aliyun CLI kubeconfig setup here
+          # For now, rely on Terraform destroy to handle
+          echo "Skipping — Terraform destroy will clean up SLB resources."
+
       # ── Terraform destroy ───────────────────────────────────────────────────
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -207,6 +250,14 @@ jobs:
           ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          GCP_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+          ALICLOUD_ACCESS_KEY: ${{ secrets.ALICLOUD_ACCESS_KEY }}
+          ALICLOUD_SECRET_KEY: ${{ secrets.ALICLOUD_SECRET_KEY }}
+          ALICLOUD_REGION: ${{ steps.target.outputs.region }}
+          BTP_GLOBALACCOUNT: ${{ secrets.SAP_BTP_GLOBALACCOUNT }}
+          BTP_CLI_SERVER_URL: ${{ secrets.SAP_BTP_CLI_SERVER_URL }}
+          BTP_CLIENT_ID: ${{ secrets.SAP_BTP_CLIENT_ID }}
+          BTP_CLIENT_SECRET: ${{ secrets.SAP_BTP_CLIENT_SECRET }}
 
       - name: Summary
         run: |

@@ -1,0 +1,8 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: alicloud-disk-essd
+provisioner: diskplugin.csi.alibabacloud.com
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  type: cloud_essd

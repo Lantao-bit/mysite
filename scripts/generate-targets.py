@@ -33,7 +33,13 @@ def derive_values(target):
     provider = target["provider"]
 
     target["cluster_name"] = f"portfolio-{name}"
-    target["registry"] = "ecr" if provider == "aws" else "dockerhub"
+    target["registry"] = {
+        'aws': 'ecr',
+        'azure': 'dockerhub',
+        'gcp': 'dockerhub',
+        'sap': 'dockerhub',
+        'alicloud': 'dockerhub'
+    }.get(provider, 'dockerhub')
 
     if provider == "azure":
         target["resource_group"] = f"portfolio-rg-{name}"
@@ -189,6 +195,162 @@ provider "azurerm" {
     return {"main.tf": main_tf, "backend.tf": backend_tf, "versions.tf": versions_tf}
 
 
+def generate_terraform_gcp(target):
+    name = target["name"]
+    region = target["region"]
+    cluster_name = target["cluster_name"]
+
+    main_tf = f'''module "gcp" {{
+  source = "../../modules/gcp"
+
+  region       = "{region}"
+  cluster_name = "{cluster_name}"
+  project_id   = "portfolio-gcp"
+  environment  = "{name}"
+  project_name = "portfolio"
+  k8s_version  = "1.31"
+}}
+
+output "cluster_endpoint" {{
+  value = module.gcp.cluster_endpoint
+}}
+
+output "cluster_name" {{
+  value = module.gcp.cluster_name
+}}
+
+output "artifact_registry_url" {{
+  value = module.gcp.artifact_registry_url
+}}
+'''
+
+    backend_tf = f'''terraform {{
+  backend "gcs" {{
+    bucket = "portfolio-tfstate-gcp"
+    prefix = "{name}/terraform.tfstate"
+  }}
+}}
+'''
+
+    versions_tf = '''terraform {
+  required_version = ">= 1.0"
+
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 5.0"
+    }
+  }
+}
+'''
+
+    return {"main.tf": main_tf, "backend.tf": backend_tf, "versions.tf": versions_tf}
+
+
+def generate_terraform_sap(target):
+    name = target["name"]
+    region = target["region"]
+    cluster_name = target["cluster_name"]
+
+    main_tf = f'''module "sap" {{
+  source = "../../modules/sap"
+
+  region         = "{region}"
+  cluster_name   = "{cluster_name}"
+  environment    = "{name}"
+  project_name   = "portfolio"
+  subaccount_id  = "placeholder-subaccount-id"
+  globalaccount  = "placeholder-globalaccount"
+}}
+
+output "cluster_name" {{
+  value = module.sap.cluster_name
+}}
+
+output "kubeconfig_url" {{
+  value = module.sap.kubeconfig_url
+}}
+'''
+
+    backend_tf = f'''terraform {{
+  backend "s3" {{
+    bucket       = "portfolio-tfstate-712416941115"
+    key          = "{name}/terraform.tfstate"
+    region       = "us-east-1"
+    use_lockfile = true
+    encrypt      = true
+  }}
+}}
+'''
+
+    versions_tf = '''terraform {
+  required_version = ">= 1.0"
+
+  required_providers {
+    btp = {
+      source  = "sap/btp"
+      version = "~> 1.0"
+    }
+  }
+}
+'''
+
+    return {"main.tf": main_tf, "backend.tf": backend_tf, "versions.tf": versions_tf}
+
+
+def generate_terraform_alicloud(target):
+    name = target["name"]
+    region = target["region"]
+    cluster_name = target["cluster_name"]
+
+    main_tf = f'''module "alicloud" {{
+  source = "../../modules/alicloud"
+
+  region       = "{region}"
+  cluster_name = "{cluster_name}"
+  environment  = "{name}"
+  project_name = "portfolio"
+  vpc_cidr     = "{target.get('_vpc_cidr', '10.4.0.0/16')}"
+  k8s_version  = "1.30"
+}}
+
+output "cluster_endpoint" {{
+  value = module.alicloud.cluster_endpoint
+}}
+
+output "cluster_name" {{
+  value = module.alicloud.cluster_name
+}}
+
+output "acr_registry_url" {{
+  value = module.alicloud.acr_registry_url
+}}
+'''
+
+    backend_tf = f'''terraform {{
+  backend "oss" {{
+    bucket = "portfolio-tfstate-ali"
+    prefix = "{name}/terraform.tfstate"
+    region = "cn-hangzhou"
+  }}
+}}
+'''
+
+    versions_tf = '''terraform {
+  required_version = ">= 1.0"
+
+  required_providers {
+    alicloud = {
+      source  = "aliyun/alicloud"
+      version = "~> 1.200"
+    }
+  }
+}
+'''
+
+    return {"main.tf": main_tf, "backend.tf": backend_tf, "versions.tf": versions_tf}
+
+
 # ─── K8s generators ───────────────────────────────────────────────────────────
 
 def generate_k8s(target):
@@ -316,15 +478,22 @@ def main():
 
     # Derive values
     aws_targets = []
+    alicloud_targets = []
     for t in targets:
         derive_values(t)
         if t["provider"] == "aws":
             aws_targets.append(t)
+        elif t["provider"] == "alicloud":
+            alicloud_targets.append(t)
 
     # Assign VPC CIDRs and first-AWS flag
     for i, t in enumerate(aws_targets):
         t["_vpc_cidr"] = f"10.{i + 1}.0.0/16"
         t["_is_first_aws"] = (i == 0)
+
+    # Assign VPC CIDRs for Alibaba targets (starting from 10.4.0.0/16)
+    for i, t in enumerate(alicloud_targets):
+        t["_vpc_cidr"] = f"10.{i + 4}.0.0/16"
 
     # Validate
     validate_targets(targets)
@@ -341,6 +510,12 @@ def main():
             tf_files = generate_terraform_aws(t)
         elif provider == "azure":
             tf_files = generate_terraform_azure(t)
+        elif provider == "gcp":
+            tf_files = generate_terraform_gcp(t)
+        elif provider == "sap":
+            tf_files = generate_terraform_sap(t)
+        elif provider == "alicloud":
+            tf_files = generate_terraform_alicloud(t)
         else:
             print(f"  ⚠ Unknown provider '{provider}' for target '{name}' — skipping Terraform")
             continue

@@ -72,11 +72,56 @@ targets:
       branches: [main]
 
   - name: dev-aws-ap-southeast-1
-    enabled: true
+    enabled: false
     provider: aws
     region: ap-southeast-1
     github_environment: "non-prod"
     dns_subdomain: demo
+    replicas: 1
+    resources:
+      cpu_request: 50m
+      cpu_limit: 250m
+      memory_request: 32Mi
+      memory_limit: 128Mi
+    trigger:
+      branches: [main]
+
+  - name: dev-gcp-asia-southeast1
+    enabled: false
+    provider: gcp
+    region: asia-southeast1
+    github_environment: "non-prod"
+    dns_subdomain: gcp
+    replicas: 1
+    resources:
+      cpu_request: 50m
+      cpu_limit: 250m
+      memory_request: 32Mi
+      memory_limit: 128Mi
+    trigger:
+      branches: [main]
+
+  - name: dev-sap-ap21
+    enabled: false
+    provider: sap
+    region: ap21
+    github_environment: "non-prod"
+    dns_subdomain: sap
+    replicas: 1
+    resources:
+      cpu_request: 50m
+      cpu_limit: 250m
+      memory_request: 32Mi
+      memory_limit: 128Mi
+    trigger:
+      branches: [main]
+
+  - name: dev-alicloud-cn-hangzhou
+    enabled: ture
+    provider: alicloud
+    region: cn-hangzhou
+    github_environment: "non-prod"
+    dns_subdomain: ali
     replicas: 1
     resources:
       cpu_request: 50m
