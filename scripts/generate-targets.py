@@ -82,7 +82,7 @@ def generate_terraform_aws(target):
   project_name = "portfolio"
   vpc_cidr     = "{target.get('_vpc_cidr', '10.1.0.0/16')}"
   instance_type = "t3.medium"
-  k8s_version  = "1.32"
+  k8s_version  = "1.36"
   create_ecr   = {"true" if is_first_aws else "false"}
 
   cluster_admin_arns = [
