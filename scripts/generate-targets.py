@@ -328,10 +328,12 @@ output "acr_registry_url" {{
 '''
 
     backend_tf = f'''terraform {{
-  backend "oss" {{
-    bucket = "portfolio-tfstate-ali"
-    prefix = "{name}/terraform.tfstate"
-    region = "cn-hangzhou"
+  backend "s3" {{
+    bucket       = "portfolio-tfstate-712416941115"
+    key          = "{name}/terraform.tfstate"
+    region       = "us-east-1"
+    use_lockfile = true
+    encrypt      = true
   }}
 }}
 '''
