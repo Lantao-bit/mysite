@@ -164,6 +164,7 @@ jobs:
       - name: Clean up Kubernetes LoadBalancers (GCP)
         if: steps.target.outputs.provider == 'gcp'
         run: |
+          gcloud components install gke-gcloud-auth-plugin --quiet
           gcloud container clusters get-credentials "${{ steps.target.outputs.cluster_name }}" \
             --region ${{ steps.target.outputs.region }} --project ${{ secrets.GCP_PROJECT_ID }} 2>/dev/null || true
           kubectl delete svc --all -n ingress-nginx 2>/dev/null || true
