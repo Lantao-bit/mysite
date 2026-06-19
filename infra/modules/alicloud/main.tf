@@ -64,9 +64,9 @@ resource "alicloud_cs_managed_kubernetes" "main" {
 # -----------------------------------------------------------------------------
 
 resource "alicloud_cs_kubernetes_node_pool" "main" {
-  cluster_id   = alicloud_cs_managed_kubernetes.main.id
-  name         = "${var.cluster_name}-pool"
-  vswitch_ids  = alicloud_vswitch.main[*].id
+  cluster_id     = alicloud_cs_managed_kubernetes.main.id
+  node_pool_name = "${var.cluster_name}-pool"
+  vswitch_ids    = alicloud_vswitch.main[*].id
   desired_size = 1
 
   instance_types       = [var.instance_type]

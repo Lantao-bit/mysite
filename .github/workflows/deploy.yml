@@ -317,6 +317,8 @@ jobs:
           ARM_TENANT_ID: ${{ matrix.target.provider == 'azure' && secrets.AZURE_TENANT_ID || '' }}
           # GCP
           GCP_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+          TF_VAR_project_id: ${{ matrix.target.provider == 'gcp' && secrets.GCP_PROJECT_ID || '' }}
+          GOOGLE_CLOUD_PROJECT: ${{ matrix.target.provider == 'gcp' && secrets.GCP_PROJECT_ID || '' }}
           # Alibaba
           ALICLOUD_ACCESS_KEY: ${{ matrix.target.provider == 'alicloud' && secrets.ALICLOUD_ACCESS_KEY || '' }}
           ALICLOUD_SECRET_KEY: ${{ matrix.target.provider == 'alicloud' && secrets.ALICLOUD_SECRET_KEY || '' }}

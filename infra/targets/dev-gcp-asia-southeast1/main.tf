@@ -1,9 +1,14 @@
+variable "project_id" {
+  description = "GCP project ID (passed via TF_VAR_project_id from pipeline secrets)"
+  type        = string
+}
+
 module "gcp" {
   source = "../../modules/gcp"
 
   region       = "asia-southeast1"
   cluster_name = "portfolio-dev-gcp-asia-southeast1"
-  project_id   = "portfolio-gcp"
+  project_id   = var.project_id
   environment  = "dev-gcp-asia-southeast1"
   project_name = "portfolio"
   k8s_version  = "1.31"

@@ -200,12 +200,17 @@ def generate_terraform_gcp(target):
     region = target["region"]
     cluster_name = target["cluster_name"]
 
-    main_tf = f'''module "gcp" {{
+    main_tf = f'''variable "project_id" {{
+  description = "GCP project ID (passed via TF_VAR_project_id from pipeline secrets)"
+  type        = string
+}}
+
+module "gcp" {{
   source = "../../modules/gcp"
 
   region       = "{region}"
   cluster_name = "{cluster_name}"
-  project_id   = "portfolio-gcp"
+  project_id   = var.project_id
   environment  = "{name}"
   project_name = "portfolio"
   k8s_version  = "1.31"
