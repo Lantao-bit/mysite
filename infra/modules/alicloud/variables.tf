@@ -34,5 +34,5 @@ variable "instance_type" {
 variable "k8s_version" {
   description = "Kubernetes version for the ACK cluster"
   type        = string
-  default     = "1.30"
+  default     = "1.31"
 }

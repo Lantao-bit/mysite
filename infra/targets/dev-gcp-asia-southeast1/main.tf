@@ -11,7 +11,7 @@ module "gcp" {
   project_id   = var.project_id
   environment  = "dev-gcp-asia-southeast1"
   project_name = "portfolio"
-  k8s_version  = "1.32"
+  k8s_version  = "1.35.5-gke.1241000"
 }
 
 output "cluster_endpoint" {

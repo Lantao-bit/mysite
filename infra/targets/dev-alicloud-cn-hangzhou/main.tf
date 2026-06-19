@@ -6,7 +6,7 @@ module "alicloud" {
   environment  = "dev-alicloud-cn-hangzhou"
   project_name = "portfolio"
   vpc_cidr     = "10.4.0.0/16"
-  k8s_version  = "1.30"
+  k8s_version  = "1.31"
 }
 
 output "cluster_endpoint" {

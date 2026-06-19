@@ -39,7 +39,7 @@ variable "machine_type" {
 variable "k8s_version" {
   description = "Kubernetes version for the GKE cluster"
   type        = string
-  default     = "1.32"
+  default     = "1.35.5-gke.1241000"
 }
 
 variable "network_cidr" {
