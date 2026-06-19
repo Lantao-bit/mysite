@@ -346,10 +346,15 @@ jobs:
             --name ${{ matrix.target.cluster_name }} \
             --overwrite-existing --admin
 
+      - name: Set up gcloud with GKE auth plugin
+        if: matrix.target.provider == 'gcp'
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: gke-gcloud-auth-plugin
+
       - name: Configure kubectl (GCP)
         if: matrix.target.provider == 'gcp'
         run: |
-          sudo apt-get install -y google-cloud-cli-gke-gcloud-auth-plugin
           gcloud container clusters get-credentials ${{ matrix.target.cluster_name }} \
             --region ${{ matrix.target.region }} \
             --project ${{ secrets.GCP_PROJECT_ID }}
