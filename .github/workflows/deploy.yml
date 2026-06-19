@@ -349,7 +349,7 @@ jobs:
       - name: Configure kubectl (GCP)
         if: matrix.target.provider == 'gcp'
         run: |
-          gcloud components install gke-gcloud-auth-plugin --quiet
+          sudo apt-get install -y google-cloud-cli-gke-gcloud-auth-plugin
           gcloud container clusters get-credentials ${{ matrix.target.cluster_name }} \
             --region ${{ matrix.target.region }} \
             --project ${{ secrets.GCP_PROJECT_ID }}
