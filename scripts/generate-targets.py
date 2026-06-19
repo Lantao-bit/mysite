@@ -329,7 +329,7 @@ def generate_terraform_alicloud(target):
   environment  = "{name}"
   project_name = "portfolio"
   vpc_cidr     = "{target.get('_vpc_cidr', '10.4.0.0/16')}"
-  k8s_version  = "1.31"
+  k8s_version  = "1.35"
 }}
 
 output "cluster_endpoint" {{
