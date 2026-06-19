@@ -39,6 +39,12 @@ resource "google_container_cluster" "main" {
   remove_default_node_pool = true
   initial_node_count       = 1
 
+  # Ensure the temporary default pool doesn't consume SSD quota
+  node_config {
+    disk_type    = "pd-standard"
+    disk_size_gb = 30
+  }
+
   min_master_version = var.k8s_version
 
   ip_allocation_policy {
