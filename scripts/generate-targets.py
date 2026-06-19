@@ -213,7 +213,7 @@ module "gcp" {{
   project_id   = var.project_id
   environment  = "{name}"
   project_name = "portfolio"
-  k8s_version  = "1.31"
+  k8s_version  = "1.32"
 }}
 
 output "cluster_endpoint" {{
@@ -266,6 +266,7 @@ def generate_terraform_sap(target):
   project_name   = "portfolio"
   subaccount_id  = var.subaccount_id
   globalaccount  = var.globalaccount
+  kyma_plan      = "trial"
 }}
 
 variable "subaccount_id" {{

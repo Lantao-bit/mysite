@@ -7,6 +7,7 @@ module "sap" {
   project_name   = "portfolio"
   subaccount_id  = var.subaccount_id
   globalaccount  = var.globalaccount
+  kyma_plan      = "trial"
 }
 
 variable "subaccount_id" {
