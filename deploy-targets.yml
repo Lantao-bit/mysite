@@ -7,6 +7,15 @@
 #   cluster_name   → portfolio-{target-name}  (e.g. portfolio-prod-azure-eastus)
 #   resource_group → portfolio-rg-{target-name} (Azure only)
 #   registry       → ecr (AWS) or dockerhub (Azure)
+# Azure, AWS, GCP, Alicloud - succeeded 
+# SAP BTP - failed: 
+#   - kyma runtime suspended; 
+#   - difficult to move/shift/register other plans;
+#   - its infra is actually Azure Cloud 
+# Alicloud:
+#   - realtime (identity) verification is required
+#   - payment method verification - charge and refund usd 20.00  
+
 
 targets:
   - name: prod-azure-eastus
@@ -101,7 +110,7 @@ targets:
     trigger:
       branches: [main]
 
-  - name: dev-sap-ap21
+  - name: dev-sap-ap21.   
     enabled: false
     provider: sap
     region: ap21
