@@ -35,6 +35,11 @@ resource "alicloud_vswitch" "main" {
     Project   = var.project_name
     ManagedBy = "terraform"
   }
+
+  timeouts {
+    create = "10m"
+    delete = "15m"
+  }
 }
 
 # -----------------------------------------------------------------------------

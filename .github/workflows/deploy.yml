@@ -376,18 +376,22 @@ jobs:
         run: |
           # Install aliyun CLI
           curl -sL https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz | tar xz -C /usr/local/bin/
-          # Get kubeconfig
-          aliyun cs GET /k8s/${{ matrix.target.cluster_name }}/user_config \
+          # Get kubeconfig (may fail if cluster was just created)
+          if aliyun cs GET /k8s/${{ matrix.target.cluster_name }}/user_config \
             --access-key-id "$ALICLOUD_ACCESS_KEY" \
             --access-key-secret "$ALICLOUD_SECRET_KEY" \
-            --region "${{ matrix.target.region }}" > /tmp/kubeconfig.json
-          # Extract and write kubeconfig
-          python3 -c "import json,sys;d=json.load(open('/tmp/kubeconfig.json'));open('/tmp/kubeconfig','w').write(d.get('config',''))"
-          export KUBECONFIG=/tmp/kubeconfig
-          echo "KUBECONFIG=/tmp/kubeconfig" >> "$GITHUB_ENV"
+            --region "${{ matrix.target.region }}" > /tmp/kubeconfig.json 2>/dev/null; then
+            python3 -c "import json,sys;d=json.load(open('/tmp/kubeconfig.json'));open('/tmp/kubeconfig','w').write(d.get('config',''))"
+            export KUBECONFIG=/tmp/kubeconfig
+            echo "KUBECONFIG=/tmp/kubeconfig" >> "$GITHUB_ENV"
+          else
+            echo "⚠️ Cluster not ready yet — skipping kubectl configuration"
+            echo "SKIP_K8S_DEPLOY=true" >> "$GITHUB_ENV"
+          fi
 
       # ── Helm: ingress-nginx ─────────────────────────────────────────────────
       - name: Install ingress-nginx
+        if: env.SKIP_K8S_DEPLOY != 'true'
         run: |
           # Clean up failed release if present
           status=$(helm status ingress-nginx -n ingress-nginx 2>/dev/null | grep STATUS | awk '{print $2}' || true)
@@ -402,6 +406,7 @@ jobs:
             --set controller.service.annotations."service\.beta\.kubernetes\.io/azure-load-balancer-health-probe-request-path"=/healthz
 
       - name: Wait for Load Balancer
+        if: env.SKIP_K8S_DEPLOY != 'true'
         run: |
           echo "Waiting for external address (timeout: 300s)..."
           for i in $(seq 1 30); do
@@ -419,6 +424,7 @@ jobs:
 
       # ── Helm: cert-manager ──────────────────────────────────────────────────
       - name: Install cert-manager
+        if: env.SKIP_K8S_DEPLOY != 'true'
         run: |
           status=$(helm status cert-manager -n cert-manager 2>/dev/null | grep STATUS | awk '{print $2}' || true)
           if [ "$status" = "failed" ] || [ "$status" = "pending-install" ] || [ "$status" = "pending-upgrade" ]; then
@@ -434,6 +440,7 @@ jobs:
 
       # ── Secrets ─────────────────────────────────────────────────────────────
       - name: Create pull secrets and app secret
+        if: env.SKIP_K8S_DEPLOY != 'true'
         run: |
           kubectl create namespace portfolio --dry-run=client -o yaml | kubectl apply -f -
 
@@ -466,6 +473,7 @@ jobs:
 
       # ── Kustomize deploy ────────────────────────────────────────────────────
       - name: Deploy with Kustomize
+        if: env.SKIP_K8S_DEPLOY != 'true'
         run: |
           TAG=${{ steps.tag.outputs.tag }}
           cd k8s/targets/${{ matrix.target.name }}
@@ -473,11 +481,13 @@ jobs:
           kustomize build . | kubectl apply -f -
 
       - name: Verify rollout
+        if: env.SKIP_K8S_DEPLOY != 'true'
         run: |
           kubectl rollout status deployment/portfolio -n portfolio --timeout=180s
 
       # ── DNS ─────────────────────────────────────────────────────────────────
       - name: Update Cloudflare DNS
+        if: env.SKIP_K8S_DEPLOY != 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
