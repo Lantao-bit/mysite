@@ -376,8 +376,20 @@ jobs:
         run: |
           # Install aliyun CLI
           curl -sL https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz | tar xz -C /usr/local/bin/
-          # Get kubeconfig (may fail if cluster was just created)
-          if aliyun cs GET /k8s/${{ matrix.target.cluster_name }}/user_config \
+          # Look up cluster ID by name
+          CLUSTER_ID=$(aliyun cs GET /clusters \
+            --access-key-id "$ALICLOUD_ACCESS_KEY" \
+            --access-key-secret "$ALICLOUD_SECRET_KEY" \
+            --region "${{ matrix.target.region }}" 2>/dev/null \
+            | python3 -c "import json,sys;clusters=json.load(sys.stdin);print(next((c['cluster_id'] for c in clusters if c['name']=='${{ matrix.target.cluster_name }}'),''))" 2>/dev/null || echo "")
+          if [ -z "$CLUSTER_ID" ]; then
+            echo "⚠️ Cluster not found — skipping kubectl configuration"
+            echo "SKIP_K8S_DEPLOY=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "Found cluster ID: $CLUSTER_ID"
+          # Get kubeconfig using cluster ID
+          if aliyun cs GET /k8s/${CLUSTER_ID}/user_config \
             --access-key-id "$ALICLOUD_ACCESS_KEY" \
             --access-key-secret "$ALICLOUD_SECRET_KEY" \
             --region "${{ matrix.target.region }}" > /tmp/kubeconfig.json 2>/dev/null; then
@@ -385,7 +397,7 @@ jobs:
             export KUBECONFIG=/tmp/kubeconfig
             echo "KUBECONFIG=/tmp/kubeconfig" >> "$GITHUB_ENV"
           else
-            echo "⚠️ Cluster not ready yet — skipping kubectl configuration"
+            echo "⚠️ Failed to get kubeconfig — skipping kubectl configuration"
             echo "SKIP_K8S_DEPLOY=true" >> "$GITHUB_ENV"
           fi
 
