@@ -4,10 +4,11 @@
 
 data "alicloud_zones" "available" {
   available_resource_creation = "VSwitch"
+  available_instance_type     = var.instance_type
 }
 
 locals {
-  zones = slice(data.alicloud_zones.available.zones[*].id, 0, 2)
+  zones = slice(data.alicloud_zones.available.zones[*].id, 0, min(2, length(data.alicloud_zones.available.zones[*].id)))
 }
 
 resource "alicloud_vpc" "main" {
@@ -22,7 +23,7 @@ resource "alicloud_vpc" "main" {
 }
 
 resource "alicloud_vswitch" "main" {
-  count = 2
+  count = length(local.zones)
 
   vswitch_name = "${var.project_name}-${var.environment}-vsw-${count.index}"
   vpc_id       = alicloud_vpc.main.id

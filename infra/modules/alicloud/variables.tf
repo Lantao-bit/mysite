@@ -28,7 +28,7 @@ variable "vpc_cidr" {
 variable "instance_type" {
   description = "ECS instance type for ACK worker nodes"
   type        = string
-  default     = "ecs.g6.large"
+  default     = "ecs.c9i.large"
 }
 
 variable "k8s_version" {
