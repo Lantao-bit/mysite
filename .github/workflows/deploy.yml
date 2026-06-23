@@ -485,6 +485,13 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
 
       # ── Kustomize deploy ────────────────────────────────────────────────────
+      - name: Clean up stale cert-manager webhooks (Alibaba)
+        if: matrix.target.provider == 'alicloud'
+        run: |
+          # Remove cert-manager validating webhook if no cert-manager is running
+          kubectl delete validatingwebhookconfiguration cert-manager-webhook 2>/dev/null || true
+          kubectl delete mutatingwebhookconfiguration cert-manager-webhook 2>/dev/null || true
+
       - name: Deploy with Kustomize
         run: |
           TAG=${{ steps.tag.outputs.tag }}
