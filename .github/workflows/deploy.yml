@@ -209,16 +209,26 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Login to Alibaba Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: crpi-n4tnhmkaoxpcjycw.cn-hangzhou.personal.cr.aliyuncs.com
+          username: ${{ secrets.ALICLOUD_REGISTRY_USERNAME }}
+          password: ${{ secrets.ALICLOUD_REGISTRY_PASSWORD }}
+
       - name: Build and push
         run: |
           TAG=${{ steps.meta.outputs.tag }}
           ECR_REGISTRY=${{ steps.ecr-login.outputs.registry }}
+          ACR_IMAGE="crpi-n4tnhmkaoxpcjycw.cn-hangzhou.personal.cr.aliyuncs.com/ltyang-portfolio/portfolio"
 
           docker build --platform linux/amd64 \
             -t ${{ env.IMAGE_NAME }}:${TAG} \
             -t ${{ env.IMAGE_NAME }}:latest \
             -t ${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:${TAG} \
             -t ${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:latest \
+            -t ${ACR_IMAGE}:${TAG} \
+            -t ${ACR_IMAGE}:latest \
             .
 
           # Push to Docker Hub
@@ -228,6 +238,10 @@ jobs:
           # Push to ECR
           docker push ${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:${TAG}
           docker push ${ECR_REGISTRY}/${{ env.ECR_REPOSITORY }}:latest
+
+          # Push to Alibaba Container Registry
+          docker push ${ACR_IMAGE}:${TAG}
+          docker push ${ACR_IMAGE}:latest
 
   # ────────────────────────────────────────────────────────────────────────────
   # Job: Deploy (fan-out to all matched targets in parallel)
@@ -496,7 +510,15 @@ jobs:
         run: |
           TAG=${{ steps.tag.outputs.tag }}
           cd k8s/targets/${{ matrix.target.name }}
-          kustomize edit set image "ltyang/portfolio=ltyang/portfolio:${TAG}"
+
+          # Alicloud pulls from ACR via VPC endpoint; others use Docker Hub
+          if [ "${{ matrix.target.provider }}" = "alicloud" ]; then
+            ACR_VPC="crpi-n4tnhmkaoxpcjycw-vpc.cn-hangzhou.personal.cr.aliyuncs.com/ltyang-portfolio/portfolio"
+            kustomize edit set image "ltyang/portfolio=${ACR_VPC}:${TAG}"
+          else
+            kustomize edit set image "ltyang/portfolio=ltyang/portfolio:${TAG}"
+          fi
+
           kustomize build . | kubectl apply -f -
 
       - name: Verify rollout
