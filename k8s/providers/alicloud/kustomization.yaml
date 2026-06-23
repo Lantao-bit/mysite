@@ -6,3 +6,4 @@ resources:
 patches:
   - path: pvc-patch.yaml
   - path: ingress-patch.yaml
+  - path: service-patch.yaml

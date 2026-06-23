@@ -398,6 +398,7 @@ jobs:
 
       # ── Helm: ingress-nginx ─────────────────────────────────────────────────
       - name: Install ingress-nginx
+        if: matrix.target.provider != 'alicloud'
         run: |
           # Clean up failed release if present
           status=$(helm status ingress-nginx -n ingress-nginx 2>/dev/null | grep STATUS | awk '{print $2}' || true)
@@ -406,20 +407,13 @@ jobs:
           fi
           helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
           helm repo update
-
-          # China regions can't pull from registry.k8s.io — use Alibaba Cloud mirror
-          EXTRA_ARGS=""
-          if [ "${{ matrix.target.provider }}" = "alicloud" ]; then
-            EXTRA_ARGS="--set controller.image.registry=registry.cn-hangzhou.aliyuncs.com --set controller.image.image=google_containers/nginx-ingress-controller --set controller.image.digest= --set controller.admissionWebhooks.patch.image.registry=registry.cn-hangzhou.aliyuncs.com --set controller.admissionWebhooks.patch.image.image=google_containers/kube-webhook-certgen --set controller.admissionWebhooks.patch.image.digest="
-          fi
-
           helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
             --namespace ingress-nginx --create-namespace --wait --timeout 600s \
             --set controller.admissionWebhooks.enabled=false \
-            --set controller.service.annotations."service\.beta\.kubernetes\.io/azure-load-balancer-health-probe-request-path"=/healthz \
-            $EXTRA_ARGS
+            --set controller.service.annotations."service\.beta\.kubernetes\.io/azure-load-balancer-health-probe-request-path"=/healthz
 
       - name: Wait for Load Balancer
+        if: matrix.target.provider != 'alicloud'
         run: |
           echo "Waiting for external address (timeout: 300s)..."
           for i in $(seq 1 30); do
@@ -435,8 +429,16 @@ jobs:
           echo "::error::Timed out waiting for external address"
           exit 1
 
+      # Alicloud China: use direct LoadBalancer Service (no ingress-nginx due to GFW image pull issues)
+      - name: Wait for Load Balancer (Alibaba)
+        if: matrix.target.provider == 'alicloud'
+        run: |
+          # The Kustomize deploy will create a LoadBalancer service directly
+          echo "Alicloud target uses direct SLB — address retrieved after Kustomize deploy"
+
       # ── Helm: cert-manager ──────────────────────────────────────────────────
       - name: Install cert-manager
+        if: matrix.target.provider != 'alicloud'
         run: |
           status=$(helm status cert-manager -n cert-manager 2>/dev/null | grep STATUS | awk '{print $2}' || true)
           if [ "$status" = "failed" ] || [ "$status" = "pending-install" ] || [ "$status" = "pending-upgrade" ]; then
@@ -444,17 +446,9 @@ jobs:
           fi
           helm repo add jetstack https://charts.jetstack.io
           helm repo update
-
-          # China regions can't pull from quay.io — use mirror
-          EXTRA_ARGS=""
-          if [ "${{ matrix.target.provider }}" = "alicloud" ]; then
-            EXTRA_ARGS="--set image.registry=registry.cn-hangzhou.aliyuncs.com --set image.repository=google_containers/cert-manager-controller --set webhook.image.registry=registry.cn-hangzhou.aliyuncs.com --set webhook.image.repository=google_containers/cert-manager-webhook --set cainjector.image.registry=registry.cn-hangzhou.aliyuncs.com --set cainjector.image.repository=google_containers/cert-manager-cainjector --set startupapicheck.image.registry=registry.cn-hangzhou.aliyuncs.com --set startupapicheck.image.repository=google_containers/cert-manager-startupapicheck"
-          fi
-
           helm upgrade --install cert-manager jetstack/cert-manager \
             --namespace cert-manager --create-namespace \
-            --set installCRDs=true --wait --timeout 600s \
-            $EXTRA_ARGS
+            --set installCRDs=true --wait --timeout 600s
           kubectl wait --for=condition=Available \
             deployment/cert-manager-webhook -n cert-manager --timeout=180s
 
@@ -501,6 +495,24 @@ jobs:
       - name: Verify rollout
         run: |
           kubectl rollout status deployment/portfolio -n portfolio --timeout=180s
+
+      # Get Load Balancer address for Alicloud (service is exposed directly via SLB)
+      - name: Get Load Balancer address (Alibaba)
+        if: matrix.target.provider == 'alicloud'
+        run: |
+          echo "Waiting for SLB external address (timeout: 300s)..."
+          for i in $(seq 1 30); do
+            EXTERNAL=$(kubectl get svc portfolio-service -n portfolio \
+              -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+            if [ -n "$EXTERNAL" ]; then
+              echo "External address: $EXTERNAL"
+              echo "INGRESS_ADDRESS=$EXTERNAL" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Timed out waiting for Alibaba SLB address"
+          exit 1
 
       # ── DNS ─────────────────────────────────────────────────────────────────
       - name: Update Cloudflare DNS
