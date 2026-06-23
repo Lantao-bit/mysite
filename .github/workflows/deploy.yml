@@ -498,6 +498,16 @@ jobs:
             --docker-password="$ECR_PASSWORD" \
             --dry-run=client -o yaml | kubectl apply -f -
 
+      - name: Create ACR pull secret
+        if: matrix.target.provider == 'alicloud'
+        run: |
+          kubectl create secret docker-registry acr-pull-secret \
+            --namespace portfolio \
+            --docker-server="crpi-n4tnhmkaoxpcjycw-vpc.cn-hangzhou.personal.cr.aliyuncs.com" \
+            --docker-username="${{ secrets.ALICLOUD_REGISTRY_USERNAME }}" \
+            --docker-password="${{ secrets.ALICLOUD_REGISTRY_PASSWORD }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
       # ── Kustomize deploy ────────────────────────────────────────────────────
       - name: Clean up stale cert-manager webhooks (Alibaba)
         if: matrix.target.provider == 'alicloud'

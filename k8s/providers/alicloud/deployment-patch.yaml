@@ -1,0 +1,10 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio
+  namespace: portfolio
+spec:
+  template:
+    spec:
+      imagePullSecrets:
+        - name: acr-pull-secret
