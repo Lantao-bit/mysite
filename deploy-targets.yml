@@ -126,7 +126,7 @@ targets:
       branches: [main]
 
   - name: dev-alicloud-cn-hangzhou
-    enabled: ture
+    enabled: false
     provider: alicloud
     region: cn-hangzhou
     github_environment: "non-prod"
